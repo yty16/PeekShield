@@ -165,6 +165,7 @@ public class PeekShieldEngine : IDisposable
                 var faces = _faceEngine.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter);
 
                 int strangerCount = faces.Count(f => !f.IsOwner && f.LookingAtScreen);
+                // TODO: 低光环境下识别率偏低，回头看看要不要加点自适应曝光
                 if (strangerCount > 0 && _verifier.IsEnrolled)
                 {
                     LoggerService.LogPeek(_settings, strangerCount);
@@ -173,6 +174,8 @@ public class PeekShieldEngine : IDisposable
                         _lastSnapshotTime = DateTime.Now;
                         LoggerService.SaveSnapshot(frame, _settings);
                     }
+                    // Debug.WriteLine($"检测到 {strangerCount} 个陌生人表情");
+                    // 5 秒最多弹一次，避免连发把用户搞疯
                     if ((DateTime.Now - _lastPeekTime).TotalSeconds > 5)
                     {
                         _lastPeekTime = DateTime.Now;
@@ -187,6 +190,7 @@ public class PeekShieldEngine : IDisposable
                     Dispatcher.UIThread.Post(() => _overlay.HideAll());
                 }
 
+                // 检测到脸的时候帧率高一点，没脸就慢点省 CPU
                 int fps = faces.Count > 0 ? 8 : 3;
                 await Task.Delay(1000 / fps, ct);
             }

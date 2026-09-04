@@ -9,11 +9,14 @@ namespace PeekShield.Services;
 
 public class CameraService : System.IDisposable
 {
+    // 单例句柄复用整个进程的生命周期，不要每次换 index 都 new 一个
+    // （new + dispose 太频繁 native 那边会崩，教训）
     private readonly object _lock = new();
     private VideoCapture? _cap;
     public int Index { get; private set; } = -1;
     public string? LastError { get; private set; }
 
+    // 旧版用的 EMGU CV，API 限制太大换掉了，DShow 在 Windows 下能拿到设备名
     private static VideoCaptureAPIs Api =>
         OperatingSystem.IsWindows() ? VideoCaptureAPIs.DSHOW : VideoCaptureAPIs.ANY;
 
@@ -27,6 +30,8 @@ public class CameraService : System.IDisposable
 
     public bool Open(int index)
     {
+        // FIXME: 不要在这里调 VideoCapture.Set(FrameWidth/Height)
+        // DSHOW 后端部分驱动会触发原生 AV（AV 0xc0000005），try/catch 都拦不住。先用设备默认分辨率。
         lock (_lock)
         {
             try
