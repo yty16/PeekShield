@@ -1,50 +1,44 @@
-# PeekShield 窥屿盾
+# PeekShield（窥屿盾）
 
-[![GitHub](https://img.shields.io/badge/GitHub-yty16%2FPeekShield-blue?logo=github)](https://github.com/yty16/PeekShield)
-[![Stars](https://img.shields.io/github/stars/yty16/PeekShield)](https://github.com/yty16/PeekShield/stargazers)
-[![Downloads](https://img.shields.io/github/downloads/yty16/PeekShield/total)](https://github.com/yty16/PeekShield/releases)
-[![Latest Release](https://img.shields.io/github/v/release/yty16/PeekShield)](https://github.com/yty16/PeekShield/releases)
-[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](https://github.com/yty16/PeekShield/blob/main/LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/yty16/PeekShield)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](./LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
 
-完全独立的本地离线隐私防窥工具，支持 Windows / macOS / Linux。双击即可启动，自带完整设置窗口、系统托盘、开机自启与全部核心能力。
+我自己的防偷窥小工具。摄像头盯着，发现屏幕前出现了陌生人就自动雾化 + 弹窗。所有识别都在本地跑（dlib ResNet + 128 维特征），脸不传到任何地方。
 
-## 核心能力
-- 本地人脸录入（摄像头实时录入 / 上传照片录入），离线 dlib ResNet-34 128 维特征比对，数据不出本机。
-- 摄像头实时侦测"陌生人窥视"：检测人脸、判断是否属于机主、是否正对屏幕。
-- 屏幕雾化遮罩 / 全屏置顶保护 / 弹窗提示 / 提醒音 / 最小化受保护程序。
-- 受保护程序与窗口列表（仅当这些程序前台时触发防护）。
-- 系统托盘、开机自启、快捷键一键暂停、手动防窥模式。
+## 怎么用
 
-## 技术栈
-- .NET 8 + Avalonia 11（跨平台 UI）
-- OpenCvSharp4（摄像头）
-- DlibDotNet（dlib 离线人脸识别）
-- 模型文件：`shape_predictor_68_face_landmarks.dat`、`dlib_face_recognition_resnet_model_v1.dat`，放在 `PeekShield/Models/`
+下载 Release 里对应平台的 zip，解压双击就起来了。第一次打开会让你录入一下人脸（对着摄像头拍一张就行），然后就一直后台挂着。
 
-## 构建与发布
-模型文件较大（约 120MB），请先放入 `PeekShield/Models/`，再构建。
+设置界面能调：
+- 触发动作：屏幕雾化 / 弹窗 / 声音 / 把前台那个隐私软件最小化
+- 受保护进程/窗口（默认空，自己加）
+- 灵敏度三档（从激进到保守）
+
+## 实际情况
+
+目前只在我自己 Windows 笔记本上测过，macOS / Linux 理论上能跑但没仔细调。有问题提 Issue，有空就改。
+
+依赖两个 dlib 模型（`shape_predictor_68_face_landmarks.dat` + `dlib_face_recognition_resnet_model_v1.dat`），大概 100MB+，仓库 .gitignore 里写了不提交。Release 资产里有下，丢到 `Models/` 文件夹里。
+
+## 自己编译
 
 ```bash
 dotnet restore
 dotnet build -c Release
 ```
 
-### 按平台发布（自包含，双击即用）
+发布自包含包：
+
 ```bash
-# Windows
-dotnet publish -c Release -r win-x64 -o dist/win --self-contained true
-# macOS (Intel)
-dotnet publish -c Release -r osx-x64 -o dist/osx --self-contained true
-# macOS (Apple Silicon)
-dotnet publish -c Release -r osx-arm64 -o dist/osx-arm --self-contained true
-# Linux
-dotnet publish -c Release -r linux-x64 -o dist/linux --self-contained true
+dotnet publish -c Release -r win-x64 --self-contained true -o dist/win
+dotnet publish -c Release -r linux-x64 --self-contained true -o dist/linux
+dotnet publish -c Release -r osx-arm64 --self-contained true -o dist/osx-arm
 ```
 
-## 平台说明
-- **Windows**：所有功能完整可用（前台窗口检测、最小化受保护程序、全局快捷键、托盘气球、开机自启注册表）。
-- **macOS / Linux**：核心防护（人脸录入、侦测、雾化/全屏遮罩、托盘、弹窗、提醒音）可用；前台窗口/进程级联动（受保护程序最小化、全局快捷键）依赖系统辅助功能/窗口管理接口，当前为后台常驻监控模式，后续版本补齐。
+## 隐私
+
+全本地，详情见 [PRIVACY.md](./PRIVACY.md)。简单说：人脸特征存本地文件夹（`%LocalAppData%/PeekShield/enrollment/`），相机帧不落盘除非你自己开"截图存证"。可以随时撤回同意。
 
 ## 许可
-本软件以 GNU 通用公共许可证 v3.0（GPL-3.0）发布，详见 `LICENSE`。您可以自由使用、研究、修改与再分发本软件（含商业用途）；衍生作品须以相同许可证（GPL-3.0）开源。隐私政策见 `PRIVACY.md`（全本地处理，数据不出本机）。
+
+GPL-3.0。
