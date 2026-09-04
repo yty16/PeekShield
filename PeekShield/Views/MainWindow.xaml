@@ -16,18 +16,10 @@
             <Border Padding="18" CornerRadius="10"
                     Background="#1A000000">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="总控" FontSize="16" FontWeight="SemiBold" />
-                    <TextBlock Text="这里以后放主开关、暂停、模式选择等"
-                               Opacity="0.6" />
-                </StackPanel>
-            </Border>
-
-            <Border Padding="18" CornerRadius="10"
-                    Background="#1A000000">
-                <StackPanel Spacing="10">
-                    <TextBlock Text="触发动作" FontSize="16" FontWeight="SemiBold" />
-                    <TextBlock Text="防护动作（屏幕遮罩、弹窗、声音等）"
-                               Opacity="0.6" />
+                    <TextBlock Text="摄像头" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock x:Name="CamStatusText"
+                               Text="等待摄像头枚举..."
+                               Opacity="0.7" />
                 </StackPanel>
             </Border>
         </StackPanel>

@@ -17,6 +17,8 @@
         <Product>PeekShield</Product>
         <Copyright>yty16</Copyright>
         <Description>窥屿盾 - 本地离线隐私防窥工具</Description>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <NoWarn>NETSDK1206;NETSDK1057;NU1701;CA1416</NoWarn>
     </PropertyGroup>
 
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
@@ -33,6 +35,10 @@
         <PackageReference Include="Avalonia" Version="11.3.2" />
         <PackageReference Include="Avalonia.Desktop" Version="11.3.2" />
         <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.2" />
+        <PackageReference Include="OpenCvSharp4" Version="4.10.0.20240615" />
+        <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20240615" />
+        <PackageReference Include="OpenCvSharp4.runtime.linux-x64" Version="4.10.0.20240717" />
+        <PackageReference Include="DirectShowLib" Version="1.0.0" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     </ItemGroup>
 
     <ItemGroup>
