@@ -1,6 +1,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Avalonia.Threading;
+using PeekShield.Models;
 
 namespace PeekShield.Services;
 
@@ -8,11 +12,20 @@ public class PeekShieldEngine : IDisposable
 {
     public static PeekShieldEngine Instance { get; } = new PeekShieldEngine();
 
+    public PeekShieldSettings _settings = PeekShieldSettings.Load();
+    public PeekShieldSettings Settings => _settings;
+
     private CameraService _cam = new();
     private FaceRecognizer _recognizer = new();
     private FaceVerifier _verifier = new();
     private FaceEngine _faceEngine = null!;
-    private bool _ready;
+    private ForegroundWatcher _fg = new();
+    private OverlayService _overlay = new();
+
+    private CancellationTokenSource? _cts;
+    private Task? _loopTask;
+    private DateTime _lastPeekTime = DateTime.MinValue;
+    private DateTime _lastSnapshotTime = DateTime.MinValue;
 
     public bool IsFaceReady => _recognizer.IsReady;
     public bool IsEnrolled => _verifier.IsEnrolled;
@@ -23,7 +36,7 @@ public class PeekShieldEngine : IDisposable
 
     public void Initialize()
     {
-        LoggerService.LogInfo("引擎启动（构建签名 " + BuildConstants._buildToken + " 系统 " + Platform.OsLabel + "）");
+        LoggerService.LogInfo("引擎启动（构建签名 " + PeekShieldSettings.BuildSignature + " 系统 " + Platform.OsLabel + "）");
         Directory.CreateDirectory(Platform.LogsDir);
 
         try
@@ -48,7 +61,12 @@ public class PeekShieldEngine : IDisposable
             LoggerService.LogInfo("已录入数据加载异常：" + ex.Message);
         }
 
-        _ready = true;
+        try { _fg.Start(); } catch (Exception ex) { LoggerService.LogInfo("前台监听启动失败：" + ex.Message); }
+
+        if (_settings.EnableSmartPeek && !_settings.Paused)
+            StartLoop();
+
+        LoggerService.LogInfo("引擎初始化完成");
     }
 
     public bool EnrollFromCamera(int cameraIndex)
@@ -66,8 +84,108 @@ public class PeekShieldEngine : IDisposable
         return true;
     }
 
+    private void StartLoop()
+    {
+        if (_loopTask != null) return;
+        _cts = new CancellationTokenSource();
+        _loopTask = Task.Run(() => RunLoop(_cts.Token));
+    }
+
+    private void StopLoop()
+    {
+        try { _cts?.Cancel(); } catch { }
+        _cts = null;
+        _loopTask = null;
+    }
+
+    private async Task RunLoop(CancellationToken ct)
+    {
+        if (!_cam.IsOpen && !_cam.Open(_settings.CameraIndex))
+        {
+            LoggerService.LogInfo("摄像头打开失败，循环退出：" + _cam.LastError);
+            return;
+        }
+        LoggerService.LogInfo("检测循环开始（摄像头索引=" + _cam.Index + "）");
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                using var frame = new OpenCvSharp.Mat();
+                if (!_cam.ReadFrame(frame))
+                {
+                    await Task.Delay(500, ct);
+                    continue;
+                }
+                _fg.RefreshForeground();
+
+                var faces = _faceEngine.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter);
+
+                int strangerCount = faces.Count(f => !f.IsOwner && f.LookingAtScreen);
+                if (strangerCount > 0)
+                {
+                    LoggerService.LogPeek(_settings, strangerCount);
+                    if ((DateTime.Now - _lastSnapshotTime).TotalSeconds > 5)
+                    {
+                        _lastSnapshotTime = DateTime.Now;
+                        LoggerService.SaveSnapshot(frame, _settings);
+                    }
+                    if ((DateTime.Now - _lastPeekTime).TotalSeconds > 5)
+                    {
+                        _lastPeekTime = DateTime.Now;
+                        _overlay.HideAll();
+                        if (_settings.ActionPopup) _overlay.ShowPopup(_settings.PeekAlertText, _settings);
+                    }
+                    if (_settings.ActionMinimize && IsProtectedForeground())
+                        WindowGuard.MinimizeProcesses(_settings.ProtectedProcesses);
+                }
+                else if (strangerCount == 0)
+                {
+                    Dispatcher.UIThread.Post(() => _overlay.HideAll());
+                }
+
+                int fps = faces.Count > 0 ? 8 : 3;
+                await Task.Delay(1000 / fps, ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                LoggerService.LogInfo("检测循环异常：" + ex.Message);
+                await Task.Delay(1000, ct);
+            }
+        }
+
+        LoggerService.LogInfo("检测循环结束");
+    }
+
+    private bool IsProtectedForeground()
+    {
+        if (!_fg.IsSupported) return false;
+        var proc = (_fg.ForegroundProcessName ?? "").ToLowerInvariant();
+        if (string.IsNullOrEmpty(proc)) return false;
+        var title = _fg.ForegroundWindowTitle ?? "";
+        foreach (var p in _settings.ProtectedProcesses)
+        {
+            if (!p.Enabled) continue;
+            var n = p.Name?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(n)) continue;
+            var proc2 = proc.EndsWith(".exe") ? proc[..^4] : proc;
+            var n2 = n.EndsWith(".exe") ? n[..^4] : n;
+            if (proc2 == n2) return true;
+        }
+        foreach (var t in _settings.ProtectedWindowTitles)
+        {
+            if (!t.Enabled) continue;
+            var n = t.Name ?? "";
+            if (!string.IsNullOrWhiteSpace(n) && title.Contains(n, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     public void Dispose()
     {
+        try { StopLoop(); } catch { }
         try { _cam.Dispose(); } catch { }
         try { _recognizer?.Dispose(); } catch { }
     }
