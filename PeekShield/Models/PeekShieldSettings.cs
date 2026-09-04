@@ -8,7 +8,6 @@ namespace PeekShield.Models;
 
 public class PeekShieldSettings
 {
-    public enum ThemeModeEnum { System, Light, Dark }
     private static readonly string _buildToken = "eXR5MTY=";
     internal static string BuildSignature => _buildToken;
 
@@ -72,7 +71,7 @@ public class PeekShieldSettings
 
     public bool ShowTrayIcon { get; set; } = true;
 
-    public ThemeModeEnum ThemeMode { get; set; } = ThemeModeEnum.System;
+    public ThemeMode ThemeMode { get; set; } = ThemeMode.System;
 
     public bool EnableHotkey { get; set; } = true;
     public string HotkeyModifiers { get; set; } = "Ctrl+Shift";

@@ -1,3 +1,4 @@
+using System;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using PeekShield.Models;
@@ -7,9 +8,13 @@ namespace PeekShield;
 
 public partial class MainWindow : Window
 {
+    public static MainWindow? Instance;
+    public static void ShowSettings() => Instance?.Show();
+
     public MainWindow()
     {
         InitializeComponent();
+        Instance = this;
 
         var eng = PeekShieldEngine.Instance;
         var s = eng.Settings;

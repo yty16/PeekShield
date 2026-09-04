@@ -21,6 +21,14 @@ public class PeekShieldEngine : IDisposable
     private FaceEngine _faceEngine = null!;
     private ForegroundWatcher _fg = new();
     private OverlayService _overlay = new();
+    private TrayService? _tray;
+    private HotkeyService? _hotkey;
+
+    public event Action? OpenSettingsRequested;
+    public event Action? PauseToggleRequested;
+    public event Action? ManualToggleRequested;
+
+    public bool IsTrayIcon => _tray != null;
 
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
@@ -65,6 +73,33 @@ public class PeekShieldEngine : IDisposable
 
         if (_settings.EnableSmartPeek && !_settings.Paused)
             StartLoop();
+
+        if (_settings.ShowTrayIcon && _tray == null)
+        {
+            try
+            {
+                _tray = new TrayService();
+                _tray.OnTogglePause += () => { _settings.Paused = !_settings.Paused; _settings.Save(); };
+                _tray.OnToggleManual += () => { _settings.ManualMode = !_settings.ManualMode; _settings.Save(); };
+                _tray.OnOpenSettings += () => OpenSettingsRequested?.Invoke();
+                _tray.OnExit += () => App.RequestExit();
+                _tray.Start();
+            }
+            catch (Exception ex) { LoggerService.LogInfo("托盘启动失败：" + ex.Message); }
+        }
+
+        if (_settings.EnableHotkey && _hotkey == null)
+        {
+            try
+            {
+                _hotkey = new HotkeyService(_settings.HotkeyModifiers, _settings.HotkeyKey, () =>
+                {
+                    _settings.Paused = !_settings.Paused;
+                    _settings.Save();
+                });
+            }
+            catch (Exception ex) { LoggerService.LogInfo("全局热键启动失败：" + ex.Message); }
+        }
 
         LoggerService.LogInfo("引擎初始化完成");
     }
@@ -186,6 +221,8 @@ public class PeekShieldEngine : IDisposable
     public void Dispose()
     {
         try { StopLoop(); } catch { }
+        try { _tray?.Stop(); } catch { }
+        try { _hotkey?.Dispose(); } catch { }
         try { _cam.Dispose(); } catch { }
         try { _recognizer?.Dispose(); } catch { }
     }
