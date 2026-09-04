@@ -18,7 +18,6 @@
                 <StackPanel Spacing="10">
                     <TextBlock Text="摄像头" FontSize="16" FontWeight="SemiBold" />
                     <TextBlock x:Name="CamStatusText"
-                               Text="等待摄像头枚举..."
                                Opacity="0.7" />
                 </StackPanel>
             </Border>
@@ -28,11 +27,23 @@
                 <StackPanel Spacing="10">
                     <TextBlock Text="人脸录入" FontSize="16" FontWeight="SemiBold" />
                     <TextBlock x:Name="EnrollStatusText"
-                               Text="等待录入..."
                                Opacity="0.7" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button x:Name="EnrollBtn" Content="录入当前画面的人脸" Click="OnEnrollClicked" />
                     </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Padding="18" CornerRadius="10"
+                    Background="#1A000000">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="触发后的防护动作" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock Text="检测到偷窥时的反应" FontSize="12" Opacity="0.6" />
+                    <CheckBox x:Name="SmartPeekCheck" Content="智能防窥总开关" />
+                    <CheckBox x:Name="ActionBlurCheck" Content="屏幕雾化" />
+                    <CheckBox x:Name="ActionPopupCheck" Content="顶部弹窗" />
+                    <CheckBox x:Name="ActionSoundCheck" Content="提醒音" />
+                    <CheckBox x:Name="ActionMinimizeCheck" Content="最小化受保护程序" />
                 </StackPanel>
             </Border>
         </StackPanel>
