@@ -25,8 +25,6 @@ public class PeekShieldEngine : IDisposable
     private HotkeyService? _hotkey;
 
     public event Action? OpenSettingsRequested;
-    public event Action? PauseToggleRequested;
-    public event Action? ManualToggleRequested;
 
     public bool IsTrayIcon => _tray != null;
 
@@ -71,8 +69,18 @@ public class PeekShieldEngine : IDisposable
 
         try { _fg.Start(); } catch (Exception ex) { LoggerService.LogInfo("前台监听启动失败：" + ex.Message); }
 
-        if (_settings.EnableSmartPeek && !_settings.Paused)
+        if (!_verifier.IsEnrolled)
+        {
+            LoggerService.LogInfo("机主人脸尚未录入，检测循环不启动（先在主窗口录入一次）");
+        }
+        else if (_settings.EnableSmartPeek && !_settings.Paused)
+        {
             StartLoop();
+        }
+        else
+        {
+            LoggerService.LogInfo("未启动检测循环（智能防窥=" + _settings.EnableSmartPeek + " 暂停=" + _settings.Paused + "）");
+        }
 
         if (_settings.ShowTrayIcon && _tray == null)
         {
@@ -157,7 +165,7 @@ public class PeekShieldEngine : IDisposable
                 var faces = _faceEngine.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter);
 
                 int strangerCount = faces.Count(f => !f.IsOwner && f.LookingAtScreen);
-                if (strangerCount > 0)
+                if (strangerCount > 0 && _verifier.IsEnrolled)
                 {
                     LoggerService.LogPeek(_settings, strangerCount);
                     if ((DateTime.Now - _lastSnapshotTime).TotalSeconds > 5)
