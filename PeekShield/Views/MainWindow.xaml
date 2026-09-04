@@ -22,6 +22,19 @@
                                Opacity="0.7" />
                 </StackPanel>
             </Border>
+
+            <Border Padding="18" CornerRadius="10"
+                    Background="#1A000000">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="人脸录入" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock x:Name="EnrollStatusText"
+                               Text="等待录入..."
+                               Opacity="0.7" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="EnrollBtn" Content="录入当前画面的人脸" Click="OnEnrollClicked" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 
