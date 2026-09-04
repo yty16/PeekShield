@@ -7,12 +7,20 @@ namespace PeekShield;
 
 class Program
 {
+    public static bool IsSecondaryInstance;
+
     [STAThread]
     public static void Main(string[] args)
     {
+        IsSecondaryInstance = !SingleInstanceService.TryAcquire();
+
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
             try { LoggerService.LogInfo("致命未处理异常（进程即将退出）：" + (e.ExceptionObject?.ToString() ?? "未知")); } catch { }
+        };
+        AppDomain.CurrentDomain.ProcessExit += (_, e) =>
+        {
+            try { LoggerService.LogInfo("进程退出（代码 " + Environment.ExitCode + "）"); } catch { }
         };
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
@@ -20,7 +28,10 @@ class Program
             e.SetObserved();
         };
 
-        LoggerService.LogInfo("进程启动（PID " + Environment.ProcessId + "）");
+        if (IsSecondaryInstance)
+            LoggerService.LogInfo("次实例启动（PID " + Environment.ProcessId + "）：检测到主实例运行，将弹出提示对话框");
+        else
+            LoggerService.LogInfo("进程启动（PID " + Environment.ProcessId + "）");
 
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
