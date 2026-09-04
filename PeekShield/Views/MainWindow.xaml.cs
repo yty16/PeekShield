@@ -39,15 +39,22 @@ public partial class MainWindow : Window
         }
 
         var smartCheck = this.FindControl<CheckBox>("SmartPeekCheck");
-        if (smartCheck != null) smartCheck.IsChecked = s.EnableSmartPeek;
+        if (smartCheck != null) { smartCheck.IsChecked = s.EnableSmartPeek; smartCheck.Click += (_, _) => OnToggle(smartCheck, v => s.EnableSmartPeek = v); }
         var blurCheck = this.FindControl<CheckBox>("ActionBlurCheck");
-        if (blurCheck != null) blurCheck.IsChecked = s.ActionBlur;
+        if (blurCheck != null) { blurCheck.IsChecked = s.ActionBlur; blurCheck.Click += (_, _) => OnToggle(blurCheck, v => s.ActionBlur = v); }
         var popupCheck = this.FindControl<CheckBox>("ActionPopupCheck");
-        if (popupCheck != null) popupCheck.IsChecked = s.ActionPopup;
+        if (popupCheck != null) { popupCheck.IsChecked = s.ActionPopup; popupCheck.Click += (_, _) => OnToggle(popupCheck, v => s.ActionPopup = v); }
         var soundCheck = this.FindControl<CheckBox>("ActionSoundCheck");
-        if (soundCheck != null) soundCheck.IsChecked = s.ActionSound;
+        if (soundCheck != null) { soundCheck.IsChecked = s.ActionSound; soundCheck.Click += (_, _) => OnToggle(soundCheck, v => s.ActionSound = v); }
         var minCheck = this.FindControl<CheckBox>("ActionMinimizeCheck");
-        if (minCheck != null) minCheck.IsChecked = s.ActionMinimize;
+        if (minCheck != null) { minCheck.IsChecked = s.ActionMinimize; minCheck.Click += (_, _) => OnToggle(minCheck, v => s.ActionMinimize = v); }
+    }
+
+    private void OnToggle(CheckBox cb, Action<bool> setter)
+    {
+        bool v = cb.IsChecked == true;
+        setter(v);
+        PeekShieldEngine.Instance.Settings.Save();
     }
 
     private void OnEnrollClicked(object? sender, RoutedEventArgs e)
