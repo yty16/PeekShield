@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <OutputType>WinExe</OutputType>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AssemblyName>PeekShield</AssemblyName>
+        <RootNamespace>PeekShield</RootNamespace>
+        <ApplicationIcon>Resources\icon.ico</ApplicationIcon>
+        <LangVersion>latest</LangVersion>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Authors>yty16</Authors>
+        <Company>yty16</Company>
+        <Product>PeekShield</Product>
+        <Copyright>yty16</Copyright>
+        <Description>窥屿盾 - 本地离线隐私防窥工具</Description>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+        <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    </PropertyGroup>
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+        <DefineConstants>$(DefineConstants);MACOS</DefineConstants>
+    </PropertyGroup>
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+        <DefineConstants>$(DefineConstants);LINUX</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Avalonia" Version="11.3.2" />
+        <PackageReference Include="Avalonia.Desktop" Version="11.3.2" />
+        <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.2" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <AvaloniaResource Include="Resources\icon.png" />
+        <AvaloniaXaml Include="Views\MainWindow.xaml" />
+    </ItemGroup>
+
+</Project>

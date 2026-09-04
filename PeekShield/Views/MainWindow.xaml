@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PeekShield.MainWindow"
+        Title="窥屿盾—PeekShield"
+        Width="820" Height="700"
+        MinWidth="700" MinHeight="560"
+        WindowStartupLocation="CenterScreen">
+
+    <ScrollViewer>
+        <StackPanel Margin="24" Spacing="18">
+            <TextBlock Text="窥屿盾"
+                       FontSize="28" FontWeight="Bold" />
+            <TextBlock Text="本地离线隐私防窥工具"
+                       FontSize="14" Opacity="0.75" />
+
+            <Border Padding="18" CornerRadius="10"
+                    Background="#1A000000">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="总控" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock Text="这里以后放主开关、暂停、模式选择等"
+                               Opacity="0.6" />
+                </StackPanel>
+            </Border>
+
+            <Border Padding="18" CornerRadius="10"
+                    Background="#1A000000">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="触发动作" FontSize="16" FontWeight="SemiBold" />
+                    <TextBlock Text="防护动作（屏幕遮罩、弹窗、声音等）"
+                               Opacity="0.6" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+
+</Window>

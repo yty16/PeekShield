@@ -1,0 +1,26 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:fluent="using:Avalonia.Themes.Fluent"
+             x:Class="PeekShield.App">
+    <Application.Styles>
+        <fluent:FluentTheme />
+        <Style Selector="Window">
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="Button">
+            <Setter Property="FontSize" Value="12.5" />
+        </Style>
+        <Style Selector="TextBox">
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="CheckBox">
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+    </Application.Styles>
+</Application>

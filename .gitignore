@@ -1,0 +1,46 @@
+# Build output
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# .NET / NuGet
+*.nupkg
+*.snupkg
+packages/
+**/packages/
+
+# dlib 模型权重（约 120 MB，需从 Release asset 单独下载，见 README）
+Assets/Models/*.dat
+PeekShield/Assets/Models/*.dat
+PeekShield/Models/*.dat
+
+# WorkBuddy 内部产物（记忆、笔记、本地脚本）— 不进公开仓库
+.workbuddy/
+
+# 打包好的技能压缩包（不属于项目本身）
+avalonia-standalone-desktop.zip
+
+# 自包含分发包（仅作为 GitHub Release asset 上传，不进仓库）
+dist/
+
+# 运行时日志
+*.log
+logs/
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# 启动器 / 测试工具（本地开发用，不进公开仓库）
+*.cmd
+*.ps1
+tests/
+*.Tests/
