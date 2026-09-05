@@ -44,3 +44,4 @@ desktop.ini
 *.ps1
 tests/
 *.Tests/
+release/
