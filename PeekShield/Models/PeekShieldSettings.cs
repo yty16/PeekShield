@@ -119,6 +119,7 @@ public class PeekShieldSettings
                 if (s != null)
                 {
                     s.Migrate();
+                    if (s.Sanitize()) s.Save();
                     return s;
                 }
             }
@@ -139,6 +140,33 @@ public class PeekShieldSettings
             changed = true;
         }
         if (changed) Save();
+    }
+
+    private bool Sanitize()
+    {
+        bool changed = false;
+        changed |= Dedupe(ProtectedProcesses);
+        changed |= Dedupe(ProtectedWindowTitles);
+        return changed;
+    }
+
+    private static bool Dedupe(List<ProtectedEntry> list)
+    {
+        if (list == null) return false;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cleaned = new List<ProtectedEntry>();
+        foreach (var e in list)
+        {
+            if (e == null || string.IsNullOrWhiteSpace(e.Name)) { continue; }
+            if (seen.Add(e.Name)) cleaned.Add(e);
+        }
+        if (cleaned.Count != list.Count)
+        {
+            list.Clear();
+            list.AddRange(cleaned);
+            return true;
+        }
+        return false;
     }
 
     public void Save()
