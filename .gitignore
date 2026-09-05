@@ -31,6 +31,13 @@ dist/
 *.log
 logs/
 
+# 安装包产物（已作为 GitHub Release asset 上传，不进仓库）
+installer/
+# installer_source/ 内的 NSIS 安装脚本 peekshield.nsi 为源码需保留，
+# 其余均为发布产物二进制堆（DLL / Models / runtimes / .pdb / .h / .lib 等，约 370MB），不进仓库
+installer_source/*
+!installer_source/peekshield.nsi
+
 # OS / 编辑器
 .DS_Store
 Thumbs.db
