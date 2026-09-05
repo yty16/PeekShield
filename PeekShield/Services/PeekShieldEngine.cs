@@ -66,6 +66,7 @@ public class PeekShieldEngine
     public event Action<EngineStatus>? StatusChanged;
     public event Action? SettingsChanged;
     public event Action? OpenSettingsRequested;
+    public event Action? OpenPrivacyRequested;
 
     public PeekShieldSettings Settings => _settings;
     public EngineStatus Status => _status;
@@ -115,6 +116,7 @@ public class PeekShieldEngine
         _tray.OnTogglePause += TogglePause;
         _tray.OnToggleManual += ToggleManual;
         _tray.OnOpenSettings += () => OpenSettingsRequested?.Invoke();
+        _tray.OnPrivacy += () => OpenPrivacyRequested?.Invoke();
         _tray.OnHideTray += () =>
         {
             _settings.ShowTrayIcon = false;

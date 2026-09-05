@@ -1,9 +1,12 @@
 using System;
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform;
+using PeekShield;
 using PeekShield.Services;
 
 namespace PeekShield.Views;
@@ -82,9 +85,9 @@ public sealed class PrivacyConsentDialog : Window
             "· 算法存在误判可能，可能导致屏幕被临时遮挡、弹出提醒或受保护程序被最小化。",
             "· 你可通过托盘菜单或快捷键随时暂停防护。"));
         body.Children.Add(MakeSection("五、你的权利（查阅 / 删除 / 撤回同意）",
-            "· 查阅：设置 →「隐私与数据」→「打开数据目录」，可查看本机保存的全部数据。",
-            "· 删除：同一页面可「删除我的人脸数据」「删除全部日志与截图」。",
-            "· 撤回同意：同一页面可「撤回同意」，撤回同意后软件将立即停止摄像头侦测，其他功能（如手动防窥）仍可使用；下次启动会重新征求你的同意。",
+            "· 查阅：主界面「隐私与授权」卡片或托盘菜单「隐私与授权」中可「打开数据目录」，查看本机保存的全部数据。",
+            "· 删除：数据目录中可手动删除人脸数据、日志与截图；也可在「隐私与授权」中撤回同意后重新录入或清除。",
+            "· 撤回同意：在「隐私与授权」中可「撤回全部同意」，撤回后软件立即停止摄像头侦测，其他功能（如手动防窥）仍可使用；下次启动会重新征求你的同意。",
             "· 撤回后数据：已保存的人脸特征数据你可选择保留或删除；未设置自动清理时，人脸特征数据将持续保存在本地，直至你主动删除。"));
         body.Children.Add(MakeSection("六、说明",
             "本告知构成 PeekShield《隐私政策》的核心内容，完整文本见项目内 PRIVACY.md。"));
@@ -194,15 +197,35 @@ public sealed class PrivacyConsentDialog : Window
         root.Children.Add(_hint);
         root.Children.Add(btnRow);
 
-        var contact = new TextBlock
+        var linkFg = new SolidColorBrush(ThemeService.IsDark ? Color.Parse("#60A5FA") : Color.Parse("#2563EB"));
+        var mkLink = new Func<string, string, TextBlock>((text, url) =>
         {
-            Text = "PeekShield（窥屿盾）通过 GitHub 项目仓库提交 Issue 联系",
-            FontSize = 11,
-            Foreground = Palette.TextMuted,
-            TextWrapping = TextWrapping.Wrap,
+            var tb = new TextBlock
+            {
+                Text = text,
+                FontSize = 11,
+                Foreground = linkFg,
+                TextWrapping = TextWrapping.Wrap,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Cursor = new Cursor(StandardCursorType.Hand),
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+            tb.PointerPressed += (_, _) =>
+            {
+                try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+                catch { }
+            };
+            return tb;
+        });
+
+        var contact = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 10, 0, 0)
         };
+        contact.Children.Add(mkLink("项目仓库（含完整《隐私政策》PRIVACY.md）：" + BuildConstants.GitHubRepoUrl, BuildConstants.GitHubRepoUrl));
+        contact.Children.Add(mkLink("遇到问题或建议，可在 GitHub 提交 Issue：" + BuildConstants.GitHubIssuesUrl, BuildConstants.GitHubIssuesUrl));
         root.Children.Add(contact);
 
         Content = root;
