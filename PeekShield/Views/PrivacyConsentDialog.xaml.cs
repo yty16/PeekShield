@@ -206,7 +206,8 @@ public sealed class PrivacyConsentDialog : Window
                 FontSize = 11,
                 Foreground = linkFg,
                 TextWrapping = TextWrapping.Wrap,
-                HorizontalAlignment = HorizontalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                TextAlignment = TextAlignment.Center,
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Margin = new Thickness(0, 2, 0, 0)
             };
@@ -221,7 +222,7 @@ public sealed class PrivacyConsentDialog : Window
         var contact = new StackPanel
         {
             Orientation = Orientation.Vertical,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0, 10, 0, 0)
         };
         contact.Children.Add(mkLink("项目仓库（含完整《隐私政策》PRIVACY.md）：" + BuildConstants.GitHubRepoUrl, BuildConstants.GitHubRepoUrl));
