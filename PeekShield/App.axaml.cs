@@ -69,6 +69,9 @@ public partial class App : Application
             };
             main.Show();
 
+            if (ConsentService.NeedsConsent(PeekShieldEngine.Instance.Settings))
+                _ = RunConsentGateAsync(main);
+
             SingleInstanceService.StartServer(() => Dispatcher.UIThread.Post(() =>
             {
                 try
@@ -113,6 +116,23 @@ public partial class App : Application
         catch (System.Exception ex)
         {
             try { LoggerService.LogInfo("结束旧实例并重启失败：" + ex.Message); } catch { }
+        }
+    }
+
+    private static async Task RunConsentGateAsync(Window owner)
+    {
+        try
+        {
+            bool cont = await ConsentService.RunAsync(owner, PeekShieldEngine.Instance.Settings, true);
+            if (!cont)
+            {
+                LoggerService.LogInfo("首次隐私告知未获同意，程序退出");
+                RequestExit();
+            }
+        }
+        catch (System.Exception ex)
+        {
+            try { LoggerService.LogInfo("隐私告知窗口异常：" + ex.Message); } catch { }
         }
     }
 

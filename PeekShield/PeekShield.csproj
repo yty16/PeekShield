@@ -9,6 +9,8 @@
         <RootNamespace>PeekShield</RootNamespace>
         <ApplicationIcon>Resources\icon.ico</ApplicationIcon>
         <LangVersion>latest</LangVersion>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <NoWarn>NETSDK1206;NETSDK1057;NU1701;CA1416</NoWarn>
         <Version>1.0.0</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <FileVersion>1.0.0.0</FileVersion>
@@ -17,8 +19,6 @@
         <Product>PeekShield</Product>
         <Copyright>yty16</Copyright>
         <Description>窥屿盾 - 本地离线隐私防窥工具</Description>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <NoWarn>NETSDK1206;NETSDK1057;NU1701;CA1416</NoWarn>
     </PropertyGroup>
 
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
@@ -45,7 +45,6 @@
 
     <ItemGroup>
         <AvaloniaResource Include="Resources\icon.png" />
-        <AvaloniaXaml Include="Views\MainWindow.xaml" />
     </ItemGroup>
 
     <Target Name="CopyModels" AfterTargets="Build">

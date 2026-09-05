@@ -46,6 +46,52 @@ public static class LoggerService
         catch { }
     }
 
+    public static int CleanupOldData(int days)
+    {
+        if (days <= 0) return 0;
+        int n = 0;
+        try
+        {
+            if (!Directory.Exists(LogDir)) return 0;
+            var cutoff = DateTime.Now.AddDays(-days);
+            foreach (var f in Directory.GetFiles(LogDir))
+            {
+                try
+                {
+                    if (File.GetLastWriteTime(f) < cutoff)
+                    {
+                        File.Delete(f);
+                        n++;
+                    }
+                }
+                catch { }
+            }
+            if (n > 0) LogInfo($"自动清理：已删除超过 {days} 天的日志与截图 {n} 个文件");
+        }
+        catch { }
+        return n;
+    }
+
+    public static int DeleteLogsAndSnapshots()
+    {
+        int n = 0;
+        try
+        {
+            if (!Directory.Exists(LogDir)) return 0;
+            foreach (var f in Directory.GetFiles(LogDir))
+            {
+                try
+                {
+                    File.Delete(f);
+                    n++;
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return n;
+    }
+
     public static void SaveDebugFrame(Mat frame, PeekShieldSettings s)
     {
         if (!s.ScreenshotOnPeek) return;
