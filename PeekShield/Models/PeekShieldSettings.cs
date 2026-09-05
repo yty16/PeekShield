@@ -20,6 +20,15 @@ public class PeekShieldSettings
     public const int DefaultPopupX = 240;
     public const int DefaultPopupY = 240;
 
+    public const int CurrentConsentVersion = 1;
+    public const int DefaultAutoCleanupDays = 30;
+
+    public bool ConsentPrivacyPolicy { get; set; } = false;
+    public bool ConsentFaceProcessing { get; set; } = false;
+    public int ConsentVersion { get; set; } = 0;
+    public string ConsentTime { get; set; } = "";
+    public int AutoCleanupDays { get; set; } = DefaultAutoCleanupDays;
+
     public bool EnableSmartPeek { get; set; } = true;
 
     public bool AutoStart { get; set; } = true;

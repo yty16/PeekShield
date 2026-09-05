@@ -47,4 +47,19 @@ internal static class Platform
 
     public static string OsLabel =>
         IsWindows ? "Windows" : (IsMacOS ? "macOS" : (IsLinux ? "Linux" : RuntimeInformation.OSDescription));
+
+    public static void OpenFolder(string path)
+    {
+        try
+        {
+            Directory.CreateDirectory(path);
+            if (IsWindows)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", path) { UseShellExecute = true });
+            else if (IsMacOS)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("open", path) { UseShellExecute = true });
+            else
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("xdg-open", path) { UseShellExecute = true });
+        }
+        catch { }
+    }
 }
