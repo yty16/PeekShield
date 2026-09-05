@@ -460,7 +460,10 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 6, 0, 2)
         });
         _procHost = new StackPanel { Spacing = 2, Margin = new Thickness(0, 2, 0, 2) };
-        foreach (var p in S.ProtectedProcesses) _procList.Add(p);
+        _procList.Clear();
+        foreach (var p in S.ProtectedProcesses)
+            if (!_procList.Any(x => string.Equals(x.Name, p.Name, StringComparison.OrdinalIgnoreCase)))
+                _procList.Add(p);
         body.Children.Add(_procHost);
         RebuildProcList();
 
@@ -501,7 +504,10 @@ public partial class MainWindow : Window
         });
 
         _titleHost = new StackPanel { Spacing = 2, Margin = new Thickness(0, 2, 0, 2) };
-        foreach (var t in S.ProtectedWindowTitles) _titleList.Add(t);
+        _titleList.Clear();
+        foreach (var t in S.ProtectedWindowTitles)
+            if (!_titleList.Any(x => string.Equals(x.Name, t.Name, StringComparison.OrdinalIgnoreCase)))
+                _titleList.Add(t);
         body.Children.Add(_titleHost);
         RebuildTitleList();
 
