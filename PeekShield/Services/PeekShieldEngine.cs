@@ -20,9 +20,11 @@ public class PeekShieldEngine
     public static readonly PeekShieldEngine Instance = new();
 
     private PeekShieldSettings _settings = new();
-    private FaceRecognizer? _recognizer;
+    private volatile FaceRecognizer? _recognizer;
     private FaceVerifier? _verifier;
-    private FaceEngine? _faceEngine;
+    private volatile FaceEngine? _faceEngine;
+    private Task<bool>? _faceEngineTask;
+    private readonly object _faceLock = new();
     private readonly CameraService _camera = new();
     private readonly ForegroundWatcher _fg = new();
     private readonly OverlayService _overlay = new();
@@ -84,29 +86,8 @@ public class PeekShieldEngine
     public void Initialize()
     {
         _settings = PeekShieldSettings.Load();
-        _recognizer = new FaceRecognizer();
-        var modelsDir = Platform.ModelsDir;
-        var spPath = Path.Combine(modelsDir, "shape_predictor_68_face_landmarks.dat");
-        var netPath = Path.Combine(modelsDir, "dlib_face_recognition_resnet_model_v1.dat");
-        if (!File.Exists(spPath) || !File.Exists(netPath))
-        {
-            _cameraError = "人脸识别模型文件缺失，请重新部署程序";
-            LoggerService.LogInfo("Dlib 模型文件缺失：sp=" + spPath + " net=" + netPath);
-            PushStatus(EngineStatus.Error);
-        }
-        else
-        {
-            _recognizer.Load(spPath, netPath);
-        }
         _verifier = new FaceVerifier();
         _verifier.Load(EnrollDir);
-        _faceEngine = new FaceEngine(_recognizer, _verifier);
-        if (!_faceEngine.IsFaceReady)
-        {
-            _cameraError = "人脸识别模型未能加载，详见 logs/engine.log";
-            LoggerService.LogInfo("人脸识别引擎未就绪：recognizer.IsReady=" + _recognizer.IsReady);
-            PushStatus(EngineStatus.Error);
-        }
 
         _fg.Start();
 
@@ -140,12 +121,60 @@ public class PeekShieldEngine
             StartLoop();
     }
 
+    private Task<bool> EnsureFaceEngineAsync()
+    {
+        lock (_faceLock)
+        {
+            if (_faceEngine != null && _faceEngine.IsFaceReady) return Task.FromResult(true);
+            if (_faceEngineTask != null) return _faceEngineTask;
+            _faceEngineTask = Task.Run(LoadFaceEngineCore);
+            return _faceEngineTask;
+        }
+    }
+
+    private bool LoadFaceEngineCore()
+    {
+        try
+        {
+            var modelsDir = Platform.ModelsDir;
+            var spPath = Path.Combine(modelsDir, "shape_predictor_68_face_landmarks.dat");
+            var netPath = Path.Combine(modelsDir, "dlib_face_recognition_resnet_model_v1.dat");
+            if (!File.Exists(spPath) || !File.Exists(netPath))
+            {
+                _cameraError = "人脸识别模型文件缺失，请重新部署程序";
+                LoggerService.LogInfo("Dlib 模型文件缺失：sp=" + spPath + " net=" + netPath);
+                PushStatus(EngineStatus.Error);
+                return false;
+            }
+            if (_recognizer == null) _recognizer = new FaceRecognizer();
+            _recognizer.Load(spPath, netPath);
+            _faceEngine = new FaceEngine(_recognizer, _verifier!);
+            if (!_faceEngine.IsFaceReady)
+            {
+                _cameraError = "人脸识别模型未能加载，详见 logs/engine.log";
+                LoggerService.LogInfo("人脸识别引擎未就绪：recognizer.IsReady=" + _recognizer.IsReady);
+                PushStatus(EngineStatus.Error);
+                return false;
+            }
+            LoggerService.LogInfo("人脸识别模型已按需加载完成（构建签名 " + BuildConstants.BuildSignature + "）");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _cameraError = "人脸识别模型加载异常，详见 logs/engine.log";
+            LoggerService.LogInfo("人脸识别引擎加载异常：" + ex);
+            PushStatus(EngineStatus.Error);
+            return false;
+        }
+    }
+
     public void StartLoop()
     {
         if (_loopTask != null && !_loopTask.IsCompleted) return;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         _loopTask = Task.Run(() => LoopAsync(ct));
+        if (_verifier != null && _verifier.IsEnrolled) _ = EnsureFaceEngineAsync();
     }
 
     public void StopLoop()
@@ -181,7 +210,7 @@ public class PeekShieldEngine
         {
             try
             {
-                if (_faceEngine == null) { await SafeDelay(2000, ct); continue; }
+                if (_faceEngine == null || !_faceEngine.IsFaceReady) { await SafeDelay(1000, ct); continue; }
                 bool should = ShouldMonitor();
                 if (!should)
                 {
@@ -599,6 +628,12 @@ public class PeekShieldEngine
     {
         if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
         StopLoop();
+        if (!await EnsureFaceEngineAsync())
+        {
+            _cameraError = "人脸识别模型加载失败，无法录入人脸";
+            LoggerService.LogInfo("录入前模型按需加载失败");
+            return false;
+        }
         bool wasEnrolled = _verifier!.IsEnrolled;
         _verifier.Clear();
         bool ok = false;
@@ -693,6 +728,12 @@ public class PeekShieldEngine
     {
         if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
         StopLoop();
+        if (!await EnsureFaceEngineAsync())
+        {
+            _cameraError = "人脸识别模型加载失败，无法录入人脸";
+            LoggerService.LogInfo("照片录入前模型按需加载失败");
+            return false;
+        }
         bool wasEnrolled = _verifier!.IsEnrolled;
         _verifier.Clear();
         bool ok = false;
