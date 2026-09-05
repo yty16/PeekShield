@@ -20,10 +20,10 @@
 - .NET 8 + Avalonia 11（跨平台 UI）
 - OpenCvSharp4（摄像头）
 - DlibDotNet（dlib 离线人脸识别）
-- 模型文件：`shape_predictor_68_face_landmarks.dat`、`dlib_face_recognition_resnet_model_v1.dat`，放在 `PeekShield/Models/`
+- 模型文件：`shape_predictor_68_face_landmarks.dat`、`dlib_face_recognition_resnet_model_v1.dat`，放在 `PeekShield/Assets/Models/`
 
 ## 构建与发布
-模型文件较大（约 120MB），请先放入 `PeekShield/Models/`，再构建。
+模型文件较大（约 120MB），请先放入 `PeekShield/Assets/Models/`，再构建。
 
 ```bash
 dotnet restore
@@ -33,13 +33,13 @@ dotnet build -c Release
 ### 按平台发布（自包含，双击即用）
 ```bash
 # Windows
-dotnet publish -c Release -r win-x64 -o dist/win --self-contained true
+dotnet publish -c Release -r win-x64 -o dist/win-x64 --self-contained true -p:PublishReadyToRun=false
 # macOS (Intel)
-dotnet publish -c Release -r osx-x64 -o dist/osx --self-contained true
+dotnet publish -c Release -r osx-x64 -o dist/osx-x64 --self-contained true -p:PublishReadyToRun=false
 # macOS (Apple Silicon)
-dotnet publish -c Release -r osx-arm64 -o dist/osx-arm --self-contained true
+dotnet publish -c Release -r osx-arm64 -o dist/osx-arm64 --self-contained true -p:PublishReadyToRun=false
 # Linux
-dotnet publish -c Release -r linux-x64 -o dist/linux --self-contained true
+dotnet publish -c Release -r linux-x64 -o dist/linux-x64 --self-contained true -p:PublishReadyToRun=false
 ```
 
 ## 平台说明
