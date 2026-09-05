@@ -1,10 +1,12 @@
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -12,6 +14,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using PeekShield.Models;
 using PeekShield.Services;
+using PeekShield.Views;
 
 namespace PeekShield;
 
@@ -49,6 +52,7 @@ public partial class MainWindow : Window
     private NumberField? _popXBox;
     private NumberField? _popYBox;
     private bool _updatingUi;
+    private TextBlock? _privacyStatus;
 
     private class CamItem
     {
@@ -114,6 +118,7 @@ public partial class MainWindow : Window
         BuildSuppressSection();
         BuildAdvancedSection();
         BuildMasterSection();
+        BuildPrivacySection();
 
         var exitCard = AddCard("退出");
         var exitNote = new TextBlock
@@ -926,8 +931,103 @@ public partial class MainWindow : Window
                 if (_pausedCheck != null) _pausedCheck.IsChecked = S.Paused;
                 if (_manualModeCheck != null) _manualModeCheck.IsChecked = S.ManualMode;
                 RefreshStatus();
+                RefreshPrivacyStatus();
             }
             finally { _updatingUi = false; }
         });
+    }
+
+    private void BuildPrivacySection()
+    {
+        var body = AddCard("隐私与授权");
+        _privacyStatus = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = Palette.TextSecondary,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        body.Children.Add(_privacyStatus);
+
+        var row1 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 2, 0, 4) };
+        row1.Children.Add(MakeButton("查看隐私政策 / 管理授权", (_) => _ = OpenPrivacyDialog()));
+        row1.Children.Add(MakeButton("撤回全部同意", (_) => RevokeConsent()));
+        body.Children.Add(row1);
+
+        var row2 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 2, 0, 4) };
+        row2.Children.Add(MakeButton("打开数据目录", (_) => OpenDataDir()));
+        body.Children.Add(row2);
+
+        var linkFg = new SolidColorBrush(ThemeService.IsDark ? Color.Parse("#60A5FA") : Color.Parse("#2563EB"));
+        var repoLink = new TextBlock
+        {
+            Text = "项目仓库（含完整《隐私政策》PRIVACY.md）：" + BuildConstants.GitHubRepoUrl,
+            FontSize = 12,
+            Foreground = linkFg,
+            TextWrapping = TextWrapping.Wrap,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Margin = new Thickness(0, 6, 0, 0)
+        };
+        repoLink.PointerPressed += (_, _) => OpenUrl(BuildConstants.GitHubRepoUrl);
+        body.Children.Add(repoLink);
+
+        RefreshPrivacyStatus();
+    }
+
+    private async Task OpenPrivacyDialog()
+    {
+        Show();
+        await ConsentService.RunAsync(this, S, false);
+        RefreshPrivacyStatus();
+        RefreshStatus();
+    }
+
+    private void RevokeConsent()
+    {
+        var dlg = new ConfirmDialog("撤回全部同意",
+            "撤回后软件将立即停止摄像头侦测（人脸相关功能不可用），其他功能（如手动防窥）仍可使用；下次启动会重新征求你的同意。\n\n确定要撤回吗？",
+            "撤回同意", "取消");
+        dlg.Closed += (_, _) =>
+        {
+            if (!dlg.Confirmed) return;
+            ConsentService.Revoke(S);
+            RefreshPrivacyStatus();
+            RefreshStatus();
+        };
+        dlg.ShowDialog(this);
+    }
+
+    private void OpenDataDir()
+    {
+        try
+        {
+            var dir = Platform.AppDataDir;
+            Directory.CreateDirectory(dir);
+            OpenUrl(dir);
+        }
+        catch { }
+    }
+
+    private static void OpenUrl(string url)
+    {
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch { }
+    }
+
+    public static void ShowPrivacy()
+    {
+        var w = Instance;
+        if (w == null) return;
+        w.Show();
+        _ = ConsentService.RunAsync(w, w.S, false);
+    }
+
+    private void RefreshPrivacyStatus()
+    {
+        if (_privacyStatus == null) return;
+        var policy = S.ConsentPrivacyPolicy ? "已同意" : "未同意";
+        var face = S.ConsentFaceProcessing ? "已授权" : "未授权";
+        var time = string.IsNullOrEmpty(S.ConsentTime) ? "" : $" ｜ 同意时间：{S.ConsentTime}";
+        _privacyStatus.Text = $"《隐私政策》：{policy} ｜ 人脸处理：{face}{time}";
     }
 }

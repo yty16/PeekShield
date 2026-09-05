@@ -13,4 +13,8 @@ internal static class BuildConstants
     public const string EnrollDirName = "enrollment";
     public const string LogsDirName = "logs";
     public const string ModelsDirName = "Models";
+
+    public const string GitHubRepoUrl = "https://github.com/yty16/PeekShield";
+    public const string GitHubIssuesUrl = "https://github.com/yty16/PeekShield/issues";
+    public const string GitHubPrivacyUrl = "https://github.com/yty16/PeekShield/blob/main/PRIVACY.md";
 }
