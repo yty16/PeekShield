@@ -10,6 +10,8 @@ def walk_files(base):
     out = []
     for dp, _, fns in os.walk(base):
         for fn in fns:
+            if fn.lower().endswith(".pdb"):
+                continue
             out.append(os.path.join(dp, fn))
     return out
 
@@ -122,8 +124,6 @@ def build_deb():
     with open(ctrl_tar, "rb") as fh:
         c = fh.read()
     write_ar(deb, [("debian-binary", b"2.0\n"), ("control.tar.gz", c), ("data.tar.gz", d)])
-    os.remove(data_tar)
-    os.remove(ctrl_tar)
     print("deb:", deb, os.path.getsize(deb))
 
 def build_app_zip():
@@ -163,8 +163,6 @@ def build_app_zip():
     if os.path.exists(ICON):
         shutil.copy2(ICON, os.path.join(res, "AppIcon.png"))
     zip_path = os.path.join(INSTALLER, "PeekShield-osx-arm64-%s.app.zip" % VERSION)
-    if os.path.exists(zip_path):
-        os.remove(zip_path)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for dp, _, fns in os.walk(app_dir):
             for fn in fns:
@@ -176,8 +174,6 @@ def build_app_zip():
                 zi.compress_type = zipfile.ZIP_DEFLATED
                 with open(full, "rb") as fh:
                     z.writestr(zi, fh.read())
-    import shutil as _s
-    _s.rmtree(app_dir)
     print("app.zip:", zip_path, os.path.getsize(zip_path))
 
 if __name__ == "__main__":

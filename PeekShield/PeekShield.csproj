@@ -23,6 +23,13 @@
         <Description>窥屿盾 - 本地离线隐私防窥工具</Description>
     </PropertyGroup>
 
+    <PropertyGroup>
+        <Deterministic>true</Deterministic>
+        <DebugType>none</DebugType>
+        <PeekShieldRepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../'))</PeekShieldRepoRoot>
+        <PathMap>$(PeekShieldRepoRoot)=/PeekShield/</PathMap>
+    </PropertyGroup>
+
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
         <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
     </PropertyGroup>
