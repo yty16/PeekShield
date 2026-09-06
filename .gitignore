@@ -18,7 +18,7 @@ Assets/Models/*.dat
 PeekShield/Assets/Models/*.dat
 PeekShield/Models/*.dat
 
-# WorkBuddy 内部产物（记忆、笔记、本地脚本）— 不进公开仓库
+# 项目本地状态目录（开发期对话记录、诊断缓存、临时下载与本地脚本）— 不进公开仓库
 .workbuddy/
 
 # 打包好的技能压缩包（不属于项目本身）
