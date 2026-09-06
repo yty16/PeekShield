@@ -2,6 +2,8 @@
 
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
+        <PeekShieldRuntimeVersion>8.0.27</PeekShieldRuntimeVersion>
+        <RuntimeFrameworkVersion>$(PeekShieldRuntimeVersion)</RuntimeFrameworkVersion>
         <OutputType>WinExe</OutputType>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
@@ -52,6 +54,20 @@
             <_ModelFiles Include="Assets\Models\*.dat" />
         </ItemGroup>
         <Copy SourceFiles="@(_ModelFiles)" DestinationFolder="$(OutDir)Models" SkipUnchangedFiles="true" />
+    </Target>
+
+    <Target Name="VerifyRuntimeVersion" AfterTargets="Build;Publish">
+        <PropertyGroup>
+            <_RtConfigPath Condition="'$(PublishDir)' != '' And Exists('$(PublishDir)PeekShield.runtimeconfig.json')">$(PublishDir)PeekShield.runtimeconfig.json</_RtConfigPath>
+            <_RtConfigPath Condition="'$(_RtConfigPath)' == '' And Exists('$(OutDir)PeekShield.runtimeconfig.json')">$(OutDir)PeekShield.runtimeconfig.json</_RtConfigPath>
+        </PropertyGroup>
+        <PropertyGroup Condition="'$(_RtConfigPath)' != ''">
+            <_RtConfigText>$([System.IO.File]::ReadAllText('$(_RtConfigPath)'))</_RtConfigText>
+            <_RtHasFramework>$(_RtConfigText.Contains('"Microsoft.NETCore.App"'))</_RtHasFramework>
+            <_RtHasVersion>$(_RtConfigText.Contains('"$(PeekShieldRuntimeVersion)"'))</_RtHasVersion>
+        </PropertyGroup>
+        <Message Condition="'$(_RtConfigPath)' != ''" Importance="high" Text="[VerifyRuntimeVersion] expected $(PeekShieldRuntimeVersion) | config=$(_RtConfigPath) | framework=$(_RtHasFramework) version=$(_RtHasVersion)" />
+        <Error Condition="'$(_RtConfigPath)' != '' And !($(_RtHasFramework) And $(_RtHasVersion))" Text="RUNTIME VERSION MISMATCH in $(_RtConfigPath): pinned version &quot;$(PeekShieldRuntimeVersion)&quot; for Microsoft.NETCore.App was not found. Build aborted to prevent shipping a mismatched bundle. Align RuntimeFrameworkVersion/PeekShieldRuntimeVersion or the NuGet restore." />
     </Target>
 
 </Project>
