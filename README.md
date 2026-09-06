@@ -47,10 +47,11 @@ dotnet publish -c Release -r linux-x64 -o dist/linux-x64 --self-contained true -
 - **macOS / Linux**：核心防护（人脸录入、侦测、雾化/全屏遮罩、托盘、弹窗、提醒音）可用；前台窗口/进程级联动（受保护程序最小化、全局快捷键）依赖系统辅助功能/窗口管理接口，当前为后台常驻监控模式，后续版本补齐。
 
 ## 相关链接
-- **介绍视频 仓库**：https://www.bilibili.com/video/BV1ePbj61ECS?vd_source=c8aad3a4da99b45eee78953ce384ce1d
+- **介绍视频**：https://www.bilibili.com/video/BV1ePbj61ECS?vd_source=c8aad3a4da99b45eee78953ce384ce1d
 - **GitHub 仓库**：https://github.com/yty16/PeekShield
 - **gitee 仓库**：https://gitee.com/yty16/PeekShield
 - **网盘下载链接**：https://1847400086.share.123pan.cn/123pan/OE2vvd-rGFIh?pwd=53Bj# 提取码：53Bj
 
 ## 许可
 本软件以 GNU 通用公共许可证 v3.0（GPL-3.0）发布，详见 `LICENSE`。您可以自由使用、研究、修改与再分发本软件（含商业用途）；衍生作品须以相同许可证（GPL-3.0）开源。隐私政策见 `PRIVACY.md`（全本地处理，数据不出本机）。
+使用前请先在应用内同意隐私告知
