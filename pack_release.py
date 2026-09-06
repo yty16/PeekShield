@@ -79,7 +79,7 @@ def build_control_tar(out_path, installed_size):
         "Maintainer: yty16 <3069505332@qq.com>\n"
         "Installed-Size: %d\n"
         "Description: 窥屿盾 (PeekShield) - 本地离线隐私防偷窥工具\n"
-        " 基于本地摄像头 AI 人脸识别的桌面隐私保护工具，支持屏幕雾化、告警与机主验证。\n"
+        " 基于本地摄像头人脸识别的桌面隐私保护工具，支持屏幕雾化、告警与机主验证。\n"
         % (VERSION, installed_size)
     )
     postinst = "#!/bin/sh\nchmod 755 /opt/peekshield/PeekShield\nchmod 755 /opt/peekshield/createdump 2>/dev/null\nupdate-desktop-database 2>/dev/null || true\n"
