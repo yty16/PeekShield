@@ -7,9 +7,10 @@ SetCompressor /SOLID lzma
 !define PUBLISHER "yty16"
 !define EXENAME "PeekShield.exe"
 !define INSTALLDIR "$LOCALAPPDATA\Programs\${APPNAME}"
+!define PROJECTROOT "${__FILEDIR__}\.."
 
 Name "${APPNAME} ${APPVERSION}"
-OutFile "C:\Users\Yin\WorkBuddy\PeekShield\installer\PeekShield-1.0.0.0-win-x64-setup.exe"
+OutFile "${PROJECTROOT}\installer\PeekShield-1.0.0.0-win-x64-setup.exe"
 InstallDir "${INSTALLDIR}"
 RequestExecutionLevel user
 ShowInstDetails show
@@ -17,7 +18,7 @@ ShowUninstDetails show
 
 Section "Install"
     SetOutPath "$INSTDIR"
-    File /r /x "*.nsi" /x "setup.cmd" /x "*.p7s" /x "*.h" /x "*.lib" /x "*.pdb" "C:\Users\Yin\WorkBuddy\PeekShield\dist\win-x64\*.*"
+    File /r /x "*.nsi" /x "setup.cmd" /x "*.p7s" /x "*.h" /x "*.lib" /x "*.pdb" "${PROJECTROOT}\dist\win-x64\*.*"
     WriteUninstaller "$INSTDIR\Uninstall.exe"
 
     CreateDirectory "$SMPROGRAMS\${APPNAME}"
