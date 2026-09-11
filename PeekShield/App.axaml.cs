@@ -72,6 +72,8 @@ public partial class App : Application
 
             if (ConsentService.NeedsConsent(PeekShieldEngine.Instance.Settings))
                 _ = RunConsentGateAsync(main);
+            else
+                _ = UpdateService.CheckAndNotifyAsync(main);
 
             SingleInstanceService.StartServer(() => Dispatcher.UIThread.Post(() =>
             {
@@ -129,6 +131,10 @@ public partial class App : Application
             {
                 LoggerService.LogInfo("首次隐私告知未获同意，程序退出");
                 RequestExit();
+            }
+            else
+            {
+                _ = UpdateService.CheckAndNotifyAsync(owner);
             }
         }
         catch (System.Exception ex)

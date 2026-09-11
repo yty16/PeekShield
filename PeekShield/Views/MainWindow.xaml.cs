@@ -118,6 +118,7 @@ public partial class MainWindow : Window
         BuildSuppressSection();
         BuildAdvancedSection();
         BuildGlobalSection();
+        BuildUpdateSection();
         BuildPrivacySection();
 
         var exitCard = AddCard("退出");
@@ -941,6 +942,50 @@ public partial class MainWindow : Window
             }
             finally { _updatingUi = false; }
         });
+    }
+
+    private void BuildUpdateSection()
+    {
+        var body = AddCard("软件更新");
+
+        body.Children.Add(new TextBlock
+        {
+            Text = "当前版本 v" + UpdateService.CurrentVersion,
+            FontSize = 12,
+            Foreground = Palette.TextMuted,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        Button? checkBtn = null;
+        checkBtn = MakeButton("检查更新", async (_) =>
+        {
+            if (checkBtn != null) checkBtn.IsEnabled = false;
+            try
+            {
+                var info = await UpdateService.CheckAsync();
+                UpdateService.ShowUpdateDialog(this, info);
+            }
+            finally { if (checkBtn != null) checkBtn.IsEnabled = true; }
+        });
+        body.Children.Add(checkBtn);
+
+        var srcRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 2) };
+        srcRow.Children.Add(MakeButton("GitHub Releases 下载", (_) => Platform.OpenUrl(BuildConstants.GitHubReleasesUrl)));
+        srcRow.Children.Add(MakeButton("123 网盘下载", (_) => Platform.OpenUrl(BuildConstants.Pan123Url)));
+        body.Children.Add(srcRow);
+
+        body.Children.Add(new TextBlock
+        {
+            Text = "发布源：GitHub Releases（含版本校验与在应用内更新）、123 网盘（提取码 " + BuildConstants.Pan123ExtractCode + "）。",
+            FontSize = 11.5,
+            Foreground = Palette.TextMuted,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 4)
+        });
+
+        body.Children.Add(MakeCheck("启动时自动检查更新", S.AutoCheckUpdate, v => { S.AutoCheckUpdate = v; S.Save(); }));
+        body.Children.Add(MakeCheck("有更新时自动静默更新（覆盖安装）", S.AutoSilentUpdate, v => { S.AutoSilentUpdate = v; S.Save(); }));
     }
 
     private void BuildPrivacySection()

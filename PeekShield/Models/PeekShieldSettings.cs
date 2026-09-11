@@ -33,6 +33,9 @@ public class PeekShieldSettings
 
     public bool AutoStart { get; set; } = true;
 
+    public bool AutoCheckUpdate { get; set; } = true;
+    public bool AutoSilentUpdate { get; set; } = false;
+
     public int CameraIndex { get; set; } = 0;
 
     public string CameraName { get; set; } = "";

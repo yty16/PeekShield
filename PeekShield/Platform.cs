@@ -62,4 +62,13 @@ internal static class Platform
         }
         catch { }
     }
+
+    public static void OpenUrl(string url)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch { }
+    }
 }
