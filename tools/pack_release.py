@@ -1,6 +1,6 @@
 import os, stat, tarfile, zipfile, struct, io
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
 INSTALLER = os.path.join(ROOT, "installer")
 ICON = os.path.join(ROOT, "installer_source", "Icon.png")
