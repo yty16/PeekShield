@@ -10,7 +10,7 @@ SetCompressor /SOLID lzma
 !define PROJECTROOT "${__FILEDIR__}\.."
 
 Name "${APPNAME} ${APPVERSION}"
-OutFile "${PROJECTROOT}\installer\PeekShield-1.0.0.0-win-x64-setup.exe"
+OutFile "${PROJECTROOT}\installer\PeekShield-1.1.0.0-win-x64-setup.exe"
 InstallDir "${INSTALLDIR}"
 RequestExecutionLevel user
 ShowInstDetails show
