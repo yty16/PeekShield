@@ -41,7 +41,15 @@ public static class UpdateService
         try { _http.DefaultRequestHeaders.UserAgent.ParseAdd("PeekShield-Updater"); } catch { }
     }
 
-    public static string CurrentVersion => BuildConstants.Version;
+    public static string CurrentVersion
+    {
+        get
+        {
+            if (System.Version.TryParse(BuildConstants.Version, out var v))
+                return v.ToString();
+            return BuildConstants.Version;
+        }
+    }
 
     public static async Task<UpdateInfo> CheckAsync()
     {
