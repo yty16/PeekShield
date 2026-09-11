@@ -4,6 +4,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using PeekShield.Models;
 using PeekShield.Services;
 using PeekShield.Views;
 using System.Diagnostics;
@@ -18,6 +19,13 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        if (Program.IsUninstallVerify)
+        {
+            HandleUninstallVerify();
+            base.OnFrameworkInitializationCompleted();
+            return;
+        }
+
         if (Program.IsSecondaryInstance)
         {
             if (this.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d)
@@ -130,7 +138,7 @@ public partial class App : Application
             if (!cont)
             {
                 LoggerService.LogInfo("首次隐私告知未获同意，程序退出");
-                RequestExit();
+                ForceExit();
             }
             else
             {
@@ -145,10 +153,62 @@ public partial class App : Application
 
     public static void RequestExit()
     {
+        var s = PeekShieldEngine.Instance.Settings;
+        if (s.PasswordEnabled && s.ProtectExit)
+        {
+            var w = MainWindow.Instance;
+            if (w != null)
+            {
+                var dlg = new PasswordWindow("验证以退出", "退出应用前需验证密码。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash);
+                dlg.Closed += (_, _) =>
+                {
+                    if (dlg.Result == PeekShield.Views.PasswordWindow.Outcome.Ok ||
+                        dlg.Result == PeekShield.Views.PasswordWindow.Outcome.Recovery)
+                        DoExit();
+                };
+                dlg.ShowDialog(w);
+                return;
+            }
+        }
+        DoExit();
+    }
+
+    public static void ForceExit() => DoExit();
+
+    private static void DoExit()
+    {
         _explicitExit = true;
         try { LoggerService.LogInfo("应用开始正常退出"); } catch { }
         try { PeekShieldEngine.Instance.Dispose(); } catch { }
         SingleInstanceService.Release();
         if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d) d.Shutdown();
+    }
+
+    private static void HandleUninstallVerify()
+    {
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d)
+            d.ShutdownMode = ShutdownMode.OnLastWindowClose;
+
+        var settings = PeekShieldSettings.Load();
+        if (!settings.PasswordEnabled || !settings.ProtectUninstall)
+        {
+            Environment.Exit(0);
+            return;
+        }
+
+        try { ThemeService.Init(settings.ThemeMode); } catch { }
+
+        var w = new PasswordWindow("卸载验证",
+            "为保障你的隐私，卸载本软件前需验证密码。若已设置保密问题，可通过回答保密问题来验证。",
+            settings.PasswordHash, settings.SecurityQuestion, settings.SecurityAnswerHash);
+        w.Closed += (_, _) =>
+        {
+            int code = (w.Result == PeekShield.Views.PasswordWindow.Outcome.Ok ||
+                        w.Result == PeekShield.Views.PasswordWindow.Outcome.Recovery) ? 0 : 2;
+            Environment.Exit(code);
+        };
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d2)
+            d2.MainWindow = w;
+        w.Show();
     }
 }

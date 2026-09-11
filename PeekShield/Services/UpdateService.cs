@@ -194,6 +194,6 @@ public static class UpdateService
             Platform.OpenUrl(BuildConstants.GitHubReleasesUrl);
             return;
         }
-        App.RequestExit();
+        App.ForceExit();
     }
 }

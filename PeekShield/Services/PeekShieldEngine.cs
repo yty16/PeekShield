@@ -98,6 +98,7 @@ public class PeekShieldEngine
         _tray.OnToggleManual += ToggleManual;
         _tray.OnOpenSettings += () => OpenSettingsRequested?.Invoke();
         _tray.OnPrivacy += () => OpenPrivacyRequested?.Invoke();
+        _tray.OnSecurity += () => OpenSettingsRequested?.Invoke();
         _tray.OnHideTray += () =>
         {
             _settings.ShowTrayIcon = false;

@@ -8,11 +8,13 @@ namespace PeekShield;
 class Program
 {
     public static bool IsSecondaryInstance;
+    public static bool IsUninstallVerify;
 
     [STAThread]
     public static void Main(string[] args)
     {
-        IsSecondaryInstance = !SingleInstanceService.TryAcquire();
+        IsUninstallVerify = args.Contains("--uninstall-verify");
+        IsSecondaryInstance = IsUninstallVerify ? false : !SingleInstanceService.TryAcquire();
 
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {

@@ -106,6 +106,15 @@ public class PeekShieldSettings
 
     public bool IsEnrolled { get; set; } = false;
 
+    public bool PasswordEnabled { get; set; } = false;
+    public string PasswordHash { get; set; } = "";
+    public string SecurityQuestion { get; set; } = "";
+    public string SecurityAnswerHash { get; set; } = "";
+    public bool ProtectExit { get; set; } = true;
+    public bool ProtectUninstall { get; set; } = true;
+    public bool ProtectOpenMain { get; set; } = true;
+    public bool ProtectOpenSecurity { get; set; } = true;
+
     public int SettingsVersion { get; set; } = 0;
 
     private static string SettingsPath => Path.Combine(Platform.AppDataDir, BuildConstants.SettingsFileName);
@@ -156,6 +165,13 @@ public class PeekShieldSettings
         if (SettingsVersion < 1)
         {
             SettingsVersion = 1;
+            changed = true;
+        }
+        if (SettingsVersion < 2)
+        {
+            SettingsVersion = 2;
+            if (PasswordEnabled && string.IsNullOrEmpty(PasswordHash))
+                PasswordEnabled = false;
             changed = true;
         }
         if (changed) Save();

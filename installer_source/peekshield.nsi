@@ -1,16 +1,16 @@
-; PeekShield Windows installer (NSIS 3.x)
+﻿; PeekShield Windows installer (NSIS 3.x)
 Unicode True
 SetCompressor /SOLID lzma
 
 !define APPNAME "PeekShield"
-!define APPVERSION "1.0.0.0"
+!define APPVERSION "1.2.0.0"
 !define PUBLISHER "yty16"
 !define EXENAME "PeekShield.exe"
 !define INSTALLDIR "$LOCALAPPDATA\Programs\${APPNAME}"
 !define PROJECTROOT "${__FILEDIR__}\.."
 
 Name "${APPNAME} ${APPVERSION}"
-OutFile "${PROJECTROOT}\installer\PeekShield-1.1.0.0-win-x64-setup.exe"
+OutFile "${PROJECTROOT}\installer\PeekShield-1.2.0.0-win-x64-setup.exe"
 InstallDir "${INSTALLDIR}"
 RequestExecutionLevel user
 ShowInstDetails show
@@ -35,6 +35,13 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
+    IfFileExists "$INSTDIR\${EXENAME}" 0 skip_guard
+    ExecWait '"$INSTDIR\${EXENAME}" --uninstall-verify' $0
+    IntCmp $0 0 proceed_guard
+    MessageBox MB_OK|MB_ICONEXCLAMATION "密码验证失败或已取消，卸载已终止。"
+    Abort
+    proceed_guard:
+    skip_guard:
     Delete "$DESKTOP\${APPNAME}.lnk"
     RMDir /r "$INSTDIR"
     RMDir /r "$SMPROGRAMS\${APPNAME}"

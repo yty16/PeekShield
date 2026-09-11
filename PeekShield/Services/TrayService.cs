@@ -16,6 +16,7 @@ public class TrayService
     public event Action? OnToggleManual;
     public event Action? OnOpenSettings;
     public event Action? OnPrivacy;
+    public event Action? OnSecurity;
     public event Action? OnHideTray;
     public event Action? OnExit;
 
@@ -35,6 +36,8 @@ public class TrayService
         open.Click += (_, _) => OnOpenSettings?.Invoke();
         var privacy = new NativeMenuItem("隐私与授权");
         privacy.Click += (_, _) => OnPrivacy?.Invoke();
+        var security = new NativeMenuItem("安全设置");
+        security.Click += (_, _) => OnSecurity?.Invoke();
         _pauseItem = new NativeMenuItem("暂停防护");
         _pauseItem.Click += (_, _) => OnTogglePause?.Invoke();
         _manualItem = new NativeMenuItem("手动防窥：关");
@@ -46,6 +49,7 @@ public class TrayService
 
         menu.Items.Add(open);
         menu.Items.Add(privacy);
+        menu.Items.Add(security);
         menu.Items.Add(_pauseItem);
         menu.Items.Add(_manualItem);
         menu.Items.Add(hide);

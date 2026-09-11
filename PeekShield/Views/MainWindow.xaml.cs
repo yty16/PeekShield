@@ -54,6 +54,10 @@ public partial class MainWindow : Window
     private bool _updatingUi;
     private TextBlock? _privacyStatus;
 
+    private Grid? _lockHost;
+    private StackPanel? _securityBody;
+    private bool _securityUnlocked;
+
     private class CamItem
     {
         public int Index;
@@ -71,7 +75,9 @@ public partial class MainWindow : Window
         catch { }
 
         _scroll = new ScrollViewer { Content = _root, Background = Palette.PageBg };
-        Content = _scroll;
+        _lockHost = new Grid();
+        _lockHost.Children.Add(_scroll);
+        Content = _lockHost;
         Background = Palette.PageBg;
 
         Title = "窥屿盾—PeekShield";
@@ -86,7 +92,10 @@ public partial class MainWindow : Window
         _engine.SettingsChanged += OnSettingsChanged;
         ThemeService.Changed += RebuildUi;
 
-        Build();
+        if (NeedsOpenMainGate())
+            ShowOpenMainLockPanel();
+        else
+            Build();
         RefreshStatus();
     }
 
@@ -97,6 +106,7 @@ public partial class MainWindow : Window
 
     private void Build()
     {
+        _root.Children.Clear();
         _root.Spacing = 4;
         _root.Margin = new Thickness(8);
 
@@ -120,6 +130,7 @@ public partial class MainWindow : Window
         BuildGlobalSection();
         BuildUpdateSection();
         BuildPrivacySection();
+        BuildSecuritySection();
 
         var exitCard = AddCard("退出");
         var exitNote = new TextBlock
@@ -1080,5 +1091,142 @@ public partial class MainWindow : Window
         var face = S.ConsentFaceProcessing ? "已授权" : "未授权";
         var time = string.IsNullOrEmpty(S.ConsentTime) ? "" : $" ｜ 同意时间：{S.ConsentTime}";
         _privacyStatus.Text = $"《隐私政策》：{policy} ｜ 人脸处理：{face}{time}";
+    }
+
+    private bool NeedsOpenMainGate() => S.PasswordEnabled && S.ProtectOpenMain;
+
+    private void ShowOpenMainLockPanel()
+    {
+        var panel = new StackPanel
+        {
+            Spacing = 12,
+            Margin = new Thickness(28),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "窥屿盾已锁定",
+            FontSize = 22,
+            FontWeight = FontWeight.Bold,
+            Foreground = Palette.TextPrimary,
+            HorizontalAlignment = HorizontalAlignment.Center
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "输入密码以打开主页面。",
+            FontSize = 13,
+            Foreground = Palette.TextSecondary,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(MakeButton("解锁", (_) => TryOpenMainUnlock()));
+        Content = panel;
+    }
+
+    private void TryOpenMainUnlock()
+    {
+        var r = PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
+        if (r == PasswordWindow.Outcome.Ok || r == PasswordWindow.Outcome.Recovery)
+        {
+            Content = _lockHost;
+            Build();
+            RefreshStatus();
+        }
+    }
+
+    private void BuildSecuritySection()
+    {
+        var body = AddCard("安全设置");
+        _securityBody = body;
+        RenderSecurityContent();
+    }
+
+    private void RenderSecurityContent()
+    {
+        if (_securityBody == null) return;
+        _securityBody.Children.Clear();
+        var s = S;
+
+        if (!s.PasswordEnabled)
+        {
+            _securityBody.Children.Add(new TextBlock
+            {
+                Text = "尚未启用密码保护。启用后可为退出 / 卸载 / 打开主页面 / 打开安全设置增加密码验证。",
+                FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap
+            });
+            _securityBody.Children.Add(MakeButton("设置密码", (_) => OpenSetPassword("设置密码")));
+            return;
+        }
+
+        bool needGate = s.ProtectOpenSecurity && !_securityUnlocked && !SecurityService.SessionAlt;
+        if (needGate)
+        {
+            _securityBody.Children.Add(new TextBlock
+            {
+                Text = "安全设置已锁定，验证密码后可管理。",
+                FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap
+            });
+            _securityBody.Children.Add(MakeButton("验证密码", (_) =>
+            {
+                var r = PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash);
+                if (r == PasswordWindow.Outcome.Ok || r == PasswordWindow.Outcome.Recovery) { _securityUnlocked = true; RenderSecurityContent(); }
+            }));
+            return;
+        }
+
+        var scope = new System.Text.StringBuilder();
+        if (s.ProtectExit) scope.Append("退出 ");
+        if (s.ProtectUninstall) scope.Append("卸载 ");
+        if (s.ProtectOpenMain) scope.Append("打开主页面 ");
+        if (s.ProtectOpenSecurity) scope.Append("打开安全设置 ");
+        _securityBody.Children.Add(new TextBlock
+        {
+            Text = "已启用密码保护（保护范围：" + (scope.Length > 0 ? scope.ToString().Trim() : "无") + "）",
+            FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap
+        });
+        _securityBody.Children.Add(MakeButton("修改密码", (_) => OpenSetPassword("修改密码")));
+        _securityBody.Children.Add(MakeButton("关闭密码保护", (_) => DisablePasswordProtection()));
+        if (SecurityService.SessionAlt)
+        {
+            _securityBody.Children.Add(new TextBlock
+            {
+                Text = "已解锁：可执行密码重置与关闭保护。",
+                FontSize = 12, Foreground = new SolidColorBrush(Color.Parse("#16A34A")), TextWrapping = TextWrapping.Wrap
+            });
+            _securityBody.Children.Add(MakeButton("重置密码", (_) => OpenSetPassword("重置密码")));
+        }
+        if (!string.IsNullOrEmpty(s.SecurityQuestion))
+            _securityBody.Children.Add(new TextBlock { Text = "已设置保密问题：" + s.SecurityQuestion, FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
+        else
+            _securityBody.Children.Add(new TextBlock { Text = "未设置保密问题（忘记密码时将无法自助重置，可先关闭密码保护再重新设置）。", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
+    }
+
+    private void OpenSetPassword(string title)
+    {
+        var w = new SetPasswordWindow(S, title);
+        w.ShowDialog(this);
+        RenderSecurityContent();
+        RefreshStatus();
+    }
+
+    private void DisablePasswordProtection()
+    {
+        var cd = new ConfirmDialog("关闭密码保护", "关闭后所有密码保护（退出 / 卸载 / 打开主页面 / 打开安全设置）将立即失效，确定关闭吗？", "关闭保护", "取消");
+        cd.Closed += (_, _) =>
+        {
+            if (!cd.Confirmed) return;
+            S.PasswordEnabled = false;
+            S.PasswordHash = "";
+            S.SecurityQuestion = "";
+            S.SecurityAnswerHash = "";
+            S.ProtectExit = S.ProtectUninstall = S.ProtectOpenMain = S.ProtectOpenSecurity = false;
+            S.Save();
+            _securityUnlocked = false;
+            SecurityService.ResetSession();
+            RenderSecurityContent();
+            RefreshStatus();
+        };
+        cd.ShowDialog(this);
     }
 }

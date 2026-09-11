@@ -4,7 +4,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
 INSTALLER = os.path.join(ROOT, "installer")
 ICON = os.path.join(ROOT, "installer_source", "Icon.png")
-VERSION = "1.1.0.0"
+VERSION = "1.2.0.0"
 
 def walk_files(base):
     out = []
