@@ -125,13 +125,29 @@ public class PeekShieldSettings
                     if (s.Sanitize()) s.Save();
                     return s;
                 }
+                BackupCorruptSettings();
             }
         }
         catch (System.Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[PeekShield] Settings load error: {ex.Message}");
+            BackupCorruptSettings();
         }
         return new PeekShieldSettings();
+    }
+
+    private static void BackupCorruptSettings()
+    {
+        try
+        {
+            if (File.Exists(SettingsPath))
+            {
+                var bak = SettingsPath + ".bak";
+                if (File.Exists(bak)) File.Delete(bak);
+                File.Move(SettingsPath, bak);
+            }
+        }
+        catch { }
     }
 
     private void Migrate()
