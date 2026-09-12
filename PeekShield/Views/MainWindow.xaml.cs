@@ -130,19 +130,19 @@ public partial class MainWindow : Window
         w.RevealSecurity();
     }
 
-    private void RevealSecurity()
+    private async void RevealSecurity()
     {
         if (_mainLocked)
         {
-            var r = PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
-        if (r != PasswordWindow.Outcome.Ok && r != PasswordWindow.Outcome.Recovery) return;
-        UnlockMainView();
-        Build();
-        RefreshStatus();
+            var r = await PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
+            if (r != PasswordWindow.Outcome.Ok && r != PasswordWindow.Outcome.Recovery) return;
+            UnlockMainView();
+            Build();
+            RefreshStatus();
         }
         if (S.PasswordEnabled && S.ProtectOpenSecurity && !_securityUnlocked && !SecurityService.SessionAlt)
         {
-            var r = PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
+            var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
             if (r == PasswordWindow.Outcome.Ok || r == PasswordWindow.Outcome.Recovery)
             {
                 _securityUnlocked = true;
@@ -1194,9 +1194,9 @@ public partial class MainWindow : Window
         if (_scroll != null) _scroll.IsVisible = true;
     }
 
-    private void TryOpenMainUnlock()
+    private async void TryOpenMainUnlock()
     {
-        var r = PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
+        var r = await PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
         if (r == PasswordWindow.Outcome.Ok || r == PasswordWindow.Outcome.Recovery)
         {
             UnlockMainView();
@@ -1249,9 +1249,9 @@ public partial class MainWindow : Window
                 Text = "安全设置已锁定，验证密码后可管理。",
                 FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap
             });
-            _securityBody.Children.Add(MakeButton("验证密码", (_) =>
+            _securityBody.Children.Add(MakeButton("验证密码", async (_) =>
             {
-                var r = PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash);
+                var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash);
                 if (r == PasswordWindow.Outcome.Ok || r == PasswordWindow.Outcome.Recovery) { _securityUnlocked = true; RenderSecurityContent(); }
             }));
             return;
@@ -1287,9 +1287,8 @@ public partial class MainWindow : Window
     private void OpenSetPassword(string title)
     {
         var w = new SetPasswordWindow(S, title);
+        w.Closed += (_, _) => { RenderSecurityContent(); RefreshStatus(); };
         w.ShowDialog(this);
-        RenderSecurityContent();
-        RefreshStatus();
     }
 
     private void DisablePasswordProtection()

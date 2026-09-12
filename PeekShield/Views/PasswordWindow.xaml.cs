@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -113,10 +114,10 @@ public sealed class PasswordWindow : Window
         Loaded += (_, _) => _pwd?.Focus();
     }
 
-    public static Outcome ShowVerify(Window? owner, string title, string prompt, string storedHash, string? question = null, string? answerHash = null)
+    public static async Task<Outcome> ShowVerify(Window? owner, string title, string prompt, string storedHash, string? question = null, string? answerHash = null)
     {
         var w = new PasswordWindow(title, prompt, storedHash, question, answerHash);
-        if (owner != null) w.ShowDialog(owner);
+        if (owner != null) await w.ShowDialog(owner);
         else w.Show();
         return w.Result;
     }
