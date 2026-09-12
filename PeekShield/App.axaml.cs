@@ -191,6 +191,7 @@ public partial class App : Application
             d.ShutdownMode = ShutdownMode.OnLastWindowClose;
 
         var settings = PeekShieldSettings.Load();
+        SecurityService.Settings = settings;
         if (!settings.PasswordEnabled || !settings.ProtectUninstall)
         {
             Environment.Exit(0);

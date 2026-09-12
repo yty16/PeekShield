@@ -3,14 +3,14 @@ Unicode True
 SetCompressor /SOLID lzma
 
 !define APPNAME "PeekShield"
-!define APPVERSION "1.2.0.0"
+!define APPVERSION "1.2.0.2"
 !define PUBLISHER "yty16"
 !define EXENAME "PeekShield.exe"
 !define INSTALLDIR "$LOCALAPPDATA\Programs\${APPNAME}"
 !define PROJECTROOT "${__FILEDIR__}\.."
 
 Name "${APPNAME} ${APPVERSION}"
-OutFile "${PROJECTROOT}\installer\PeekShield-1.2.0.1-win-x64-setup.exe"
+OutFile "${PROJECTROOT}\installer\PeekShield-1.2.0.2-win-x64-setup.exe"
 InstallDir "${INSTALLDIR}"
 RequestExecutionLevel user
 ShowInstDetails show

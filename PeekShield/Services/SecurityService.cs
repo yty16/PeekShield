@@ -1,6 +1,7 @@
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using PeekShield.Models;
 
 namespace PeekShield.Services;
 
@@ -12,10 +13,13 @@ public sealed class SecurityService
 
     private static readonly byte[] Pepper = Convert.FromBase64String("+WeJGQuTysvldj2gZE2PUw==");
     private static readonly byte[] _altHash = Convert.FromBase64String("qtZfenv2fy25lxxQCrgJqhcpejwxrAJoNAT/oDW4Mpg=");
+    private static readonly int[] LockoutMinutes = { 1, 5, 10, 30, 60, 120, 240 };
 
     public static bool SessionUnlocked { get; private set; }
     public static bool SessionAlt { get; private set; }
     private static DateTime _unlockAt = DateTime.MinValue;
+
+    public static PeekShieldSettings? Settings { get; set; }
 
     public static void ResetSession()
     {
@@ -66,19 +70,79 @@ public sealed class SecurityService
         alt = false;
         if (VerifyAlt(input))
         {
+            ResetLockout();
             SessionUnlocked = true;
             SessionAlt = true;
             _unlockAt = DateTime.UtcNow;
             alt = true;
             return true;
         }
+        if (IsLocked(out _)) return false;
         if (VerifySecret(stored, input))
         {
+            ResetLockout();
             SessionUnlocked = true;
             _unlockAt = DateTime.UtcNow;
             return true;
         }
         return false;
+    }
+
+    public static bool IsLocked(out int remainingMinutes)
+    {
+        remainingMinutes = 0;
+        var diff = GetLockRemaining();
+        if (diff <= TimeSpan.Zero)
+        {
+            if (Settings != null && Settings.PasswordFailedAttempts >= 5)
+            {
+                Settings.PasswordFailedAttempts = 0;
+                Settings.PasswordLockoutUntil = DateTime.MinValue;
+                Settings.Save();
+            }
+            return false;
+        }
+        remainingMinutes = (int)Math.Ceiling(diff.TotalMinutes);
+        return true;
+    }
+
+    public static TimeSpan GetLockRemaining()
+    {
+        if (Settings == null) return TimeSpan.Zero;
+        var until = Settings.PasswordLockoutUntil;
+        if (until.Kind != DateTimeKind.Utc) until = until.ToUniversalTime();
+        var diff = until - DateTime.UtcNow;
+        return diff > TimeSpan.Zero ? diff : TimeSpan.Zero;
+    }
+
+    public static void RecordFailure(out int remainingAttempts, out int lockoutMinutes)
+    {
+        remainingAttempts = 0;
+        lockoutMinutes = 0;
+        if (Settings == null) return;
+        Settings.PasswordFailedAttempts++;
+        if (Settings.PasswordFailedAttempts < 5)
+        {
+            remainingAttempts = 5 - Settings.PasswordFailedAttempts;
+            Settings.Save();
+            return;
+        }
+        int level = Math.Min(Settings.PasswordLockoutLevel, LockoutMinutes.Length - 1);
+        lockoutMinutes = LockoutMinutes[level];
+        Settings.PasswordLockoutUntil = DateTime.UtcNow.AddMinutes(lockoutMinutes);
+        Settings.PasswordLockoutLevel++;
+        remainingAttempts = 0;
+        Settings.Save();
+    }
+
+    public static void ResetLockout()
+    {
+        if (Settings == null) return;
+        if (Settings.PasswordFailedAttempts == 0 && Settings.PasswordLockoutUntil <= DateTime.MinValue && Settings.PasswordLockoutLevel == 0) return;
+        Settings.PasswordFailedAttempts = 0;
+        Settings.PasswordLockoutUntil = DateTime.MinValue;
+        Settings.PasswordLockoutLevel = 0;
+        Settings.Save();
     }
 
     private static byte[] Pbkdf2(string value, byte[] salt)

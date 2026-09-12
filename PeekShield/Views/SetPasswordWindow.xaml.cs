@@ -159,6 +159,7 @@ public sealed class SetPasswordWindow : Window
         _s.PasswordHash = SecurityService.HashSecret(pwd);
         _s.SecurityQuestion = q;
         _s.SecurityAnswerHash = ah;
+        SecurityService.ResetLockout();
         _s.ProtectExit = _exitChk?.IsChecked == true;
         _s.ProtectUninstall = _uninstallChk?.IsChecked == true;
         _s.ProtectOpenMain = _openMainChk?.IsChecked == true;

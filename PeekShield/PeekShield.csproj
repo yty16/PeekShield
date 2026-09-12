@@ -13,9 +13,9 @@
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <NoWarn>NETSDK1206;NETSDK1057;NU1701;CA1416</NoWarn>
-    <Version>1.2.0.1</Version>
-    <AssemblyVersion>1.2.0.1</AssemblyVersion>
-    <FileVersion>1.2.0.1</FileVersion>
+    <Version>1.2.0.2</Version>
+    <AssemblyVersion>1.2.0.2</AssemblyVersion>
+    <FileVersion>1.2.0.2</FileVersion>
         <Authors>yty16</Authors>
         <Company>yty16</Company>
         <Product>PeekShield</Product>

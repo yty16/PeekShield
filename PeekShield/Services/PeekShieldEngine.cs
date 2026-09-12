@@ -87,6 +87,7 @@ public class PeekShieldEngine
     public void Initialize()
     {
         _settings = PeekShieldSettings.Load();
+        SecurityService.Settings = _settings;
         _verifier = new FaceVerifier();
         _verifier.Load(EnrollDir);
 

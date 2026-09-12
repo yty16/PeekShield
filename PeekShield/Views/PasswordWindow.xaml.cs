@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using PeekShield.Services;
 
 namespace PeekShield.Views;
@@ -23,6 +24,8 @@ public sealed class PasswordWindow : Window
     private TextBlock? _hint;
     private StackPanel? _recovery;
     private TextBox? _ans;
+    private Button? _ok;
+    private readonly DispatcherTimer _lockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
     public PasswordWindow(string title, string prompt, string storedHash, string? question = null, string? answerHash = null)
     {
@@ -78,11 +81,11 @@ public sealed class PasswordWindow : Window
         panel.Children.Add(_hint);
 
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var ok = new Button { Content = "确定", MinWidth = 96, Background = new SolidColorBrush(Color.Parse("#2563EB")), Foreground = new SolidColorBrush(Colors.White), Padding = new Thickness(10, 5) };
-        ok.Click += (_, _) => TrySubmit();
+        _ok = new Button { Content = "确定", MinWidth = 96, Background = new SolidColorBrush(Color.Parse("#2563EB")), Foreground = new SolidColorBrush(Colors.White), Padding = new Thickness(10, 5) };
+        _ok.Click += (_, _) => TrySubmit();
         var cancel = new Button { Content = "取消", MinWidth = 96, Padding = new Thickness(10, 5) };
         cancel.Click += (_, _) => { Result = Outcome.Cancelled; Close(); };
-        row.Children.Add(ok);
+        row.Children.Add(_ok);
         row.Children.Add(cancel);
         panel.Children.Add(row);
 
@@ -110,7 +113,10 @@ public sealed class PasswordWindow : Window
         }
 
         Content = panel;
+        _lockTimer.Tick += (_, _) => UpdateLockCountdown();
         Loaded += (_, _) => _pwd?.Focus();
+        Closed += (_, _) => StopLockTimer();
+        RefreshLockoutUi();
     }
 
     public static async Task<Outcome> ShowVerify(Window? owner, string title, string prompt, string storedHash, string? question = null, string? answerHash = null)
@@ -131,12 +137,89 @@ public sealed class PasswordWindow : Window
         var input = _pwd?.Text ?? "";
         if (SecurityService.TryUnlock(_stored, input, out var alt))
         {
+            StopLockTimer();
             Result = Outcome.Ok;
             Close();
             return;
         }
-        if (_hint != null) { _hint.Text = "密码错误，请重试。"; _hint.IsVisible = true; }
+
+        if (SecurityService.IsLocked(out var remaining))
+        {
+            ShowLockCountdown(TimeSpan.FromMinutes(remaining));
+            StartLockTimer();
+        }
+        else
+        {
+            SecurityService.RecordFailure(out var remainingAttempts, out var lockoutMinutes);
+            if (_hint != null)
+            {
+                if (remainingAttempts > 0)
+                {
+                    _hint.Text = $"密码错误，你还有 {remainingAttempts} 次机会";
+                    _hint.IsVisible = true;
+                    StopLockTimer();
+                }
+                else
+                {
+                    ShowLockCountdown(TimeSpan.FromMinutes(lockoutMinutes));
+                    StartLockTimer();
+                }
+            }
+        }
         if (_pwd != null) _pwd.Text = "";
+    }
+
+    private void RefreshLockoutUi()
+    {
+        if (SecurityService.IsLocked(out var remaining))
+        {
+            ShowLockCountdown(TimeSpan.FromMinutes(remaining));
+            StartLockTimer();
+        }
+        else if (_hint != null)
+        {
+            _hint.IsVisible = false;
+            StopLockTimer();
+        }
+    }
+
+    private void UpdateLockCountdown()
+    {
+        var rem = SecurityService.GetLockRemaining();
+        if (rem > TimeSpan.Zero)
+        {
+            ShowLockCountdown(rem);
+            return;
+        }
+        SecurityService.IsLocked(out _);
+        StopLockTimer();
+        if (_hint != null) _hint.IsVisible = false;
+    }
+
+    private void ShowLockCountdown(TimeSpan rem)
+    {
+        if (_hint == null) return;
+        _hint.Text = $"账号已锁定，剩余锁定时间 {FormatSpan(rem)}";
+        _hint.IsVisible = true;
+    }
+
+    private static string FormatSpan(TimeSpan t)
+    {
+        int total = (int)Math.Ceiling(t.TotalSeconds);
+        int m = total / 60;
+        int s = total % 60;
+        if (m > 0) return s == 0 ? $"{m} 分钟" : $"{m} 分 {s} 秒";
+        return $"{s} 秒";
+    }
+
+    private void StartLockTimer()
+    {
+        if (!_lockTimer.IsEnabled) _lockTimer.Start();
+    }
+
+    private void StopLockTimer()
+    {
+        if (_lockTimer.IsEnabled) _lockTimer.Stop();
     }
 
     private void TryRecovery()

@@ -115,6 +115,9 @@ public class PeekShieldSettings
     public bool ProtectOpenMain { get; set; } = true;
     public bool ProtectOpenSecurity { get; set; } = true;
     public int SecuritySessionMinutes { get; set; } = 15;
+    public int PasswordFailedAttempts { get; set; } = 0;
+    public DateTime PasswordLockoutUntil { get; set; } = DateTime.MinValue;
+    public int PasswordLockoutLevel { get; set; } = 0;
 
     public int SettingsVersion { get; set; } = 0;
 
@@ -175,6 +178,14 @@ public class PeekShieldSettings
                 PasswordEnabled = false;
             changed = true;
         }
+        if (SettingsVersion < 3)
+        {
+            SettingsVersion = 3;
+            PasswordFailedAttempts = 0;
+            PasswordLockoutUntil = DateTime.MinValue;
+            PasswordLockoutLevel = 0;
+            changed = true;
+        }
         if (changed) Save();
     }
 
@@ -229,6 +240,9 @@ public class PeekShieldSettings
         ProtectUninstall = false;
         ProtectOpenMain = false;
         ProtectOpenSecurity = false;
+        PasswordFailedAttempts = 0;
+        PasswordLockoutUntil = DateTime.MinValue;
+        PasswordLockoutLevel = 0;
         Save();
     }
 }
