@@ -67,10 +67,10 @@ public sealed class SetPasswordWindow : Window
         panel.Children.Add(_qPanel);
 
         panel.Children.Add(MakeLabel("密码保护范围（勾选后在对应操作前需验证密码）"));
-        _exitChk = MakeScope("退出应用");
-        _uninstallChk = MakeScope("卸载应用");
-        _openMainChk = MakeScope("打开主页面");
-        _openSecChk = MakeScope("打开安全设置");
+        _exitChk = MakeScope("退出应用", false);
+        _uninstallChk = MakeScope("卸载应用", false);
+        _openMainChk = MakeScope("打开主页面", false);
+        _openSecChk = MakeScope("打开安全设置", true);
         panel.Children.Add(_exitChk);
         panel.Children.Add(_uninstallChk);
         panel.Children.Add(_openMainChk);
@@ -116,9 +116,9 @@ public sealed class SetPasswordWindow : Window
         return _s.PasswordEnabled;
     }
 
-    private CheckBox MakeScope(string label)
+    private CheckBox MakeScope(string label, bool isChecked)
     {
-        return new CheckBox { Content = label, IsChecked = true, Margin = new Thickness(0, 2, 0, 2) };
+        return new CheckBox { Content = label, IsChecked = isChecked, Margin = new Thickness(0, 2, 0, 2) };
     }
 
     private void UpdateUninstallWarn()
