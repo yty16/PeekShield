@@ -15,11 +15,25 @@ public sealed class SecurityService
 
     public static bool SessionUnlocked { get; private set; }
     public static bool SessionAlt { get; private set; }
+    private static DateTime _unlockAt = DateTime.MinValue;
 
     public static void ResetSession()
     {
         SessionUnlocked = false;
         SessionAlt = false;
+        _unlockAt = DateTime.MinValue;
+    }
+
+    public static bool IsSessionActive(int ttlMinutes)
+    {
+        if (!SessionUnlocked) return false;
+        if (ttlMinutes <= 0) return true;
+        return (DateTime.UtcNow - _unlockAt).TotalMinutes < ttlMinutes;
+    }
+
+    public static void RefreshSession()
+    {
+        if (SessionUnlocked) _unlockAt = DateTime.UtcNow;
     }
 
     public static string HashSecret(string secret)
@@ -54,12 +68,14 @@ public sealed class SecurityService
         {
             SessionUnlocked = true;
             SessionAlt = true;
+            _unlockAt = DateTime.UtcNow;
             alt = true;
             return true;
         }
         if (VerifySecret(stored, input))
         {
             SessionUnlocked = true;
+            _unlockAt = DateTime.UtcNow;
             return true;
         }
         return false;

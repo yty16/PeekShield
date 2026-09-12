@@ -114,6 +114,7 @@ public class PeekShieldSettings
     public bool ProtectUninstall { get; set; } = true;
     public bool ProtectOpenMain { get; set; } = true;
     public bool ProtectOpenSecurity { get; set; } = true;
+    public int SecuritySessionMinutes { get; set; } = 15;
 
     public int SettingsVersion { get; set; } = 0;
 

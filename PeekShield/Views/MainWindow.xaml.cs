@@ -60,6 +60,9 @@ public partial class MainWindow : Window
     private Border? _securityCard;
     private bool _securityUnlocked;
     private bool _mainLocked;
+    private bool _hidden;
+    private bool _securityRenderedUnlocked;
+    private DispatcherTimer? _sessionTimer;
 
     private class CamItem
     {
@@ -109,6 +112,12 @@ public partial class MainWindow : Window
             Build();
         }
         RefreshStatus();
+
+        Activated += (_, _) => OnReopen();
+        Opened += (_, _) => OnReopen();
+        _sessionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _sessionTimer.Tick += (_, _) => EnforceSessionExpiry();
+        _sessionTimer.Start();
     }
 
     public static void ShowSettings()
@@ -145,7 +154,7 @@ public partial class MainWindow : Window
             Build();
             RefreshStatus();
         }
-        if (S.PasswordEnabled && S.ProtectOpenSecurity && !_securityUnlocked && !SecurityService.SessionAlt)
+        if (S.PasswordEnabled && S.ProtectOpenSecurity && !IsSecurityUnlockedNow())
         {
             var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
             if (r == PasswordWindow.Outcome.Recovery)
@@ -1161,6 +1170,58 @@ public partial class MainWindow : Window
 
     private bool NeedsOpenMainGate() => S.PasswordEnabled && S.ProtectOpenMain;
 
+    private int SessionTtlMinutes => Math.Max(0, S.SecuritySessionMinutes);
+
+    private bool IsSecurityUnlockedNow() =>
+        (_securityUnlocked || SecurityService.SessionAlt) && SecurityService.IsSessionActive(SessionTtlMinutes);
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        _hidden = true;
+        _securityUnlocked = false;
+        SecurityService.ResetSession();
+        base.OnClosing(e);
+    }
+
+    private void OnReopen()
+    {
+        if (!_hidden) return;
+        _hidden = false;
+        if (NeedsOpenMainGate() && !SecurityService.IsSessionActive(SessionTtlMinutes))
+        {
+            _mainLocked = true;
+            _securityUnlocked = false;
+            ShowOpenMainLockPanel();
+        }
+        else if (_securityBody != null && S.PasswordEnabled && S.ProtectOpenSecurity)
+        {
+            _securityUnlocked = false;
+            RenderSecurityContent();
+        }
+    }
+
+    private void EnforceSessionExpiry()
+    {
+        if (!IsVisible) return;
+        if (SecurityService.IsSessionActive(SessionTtlMinutes)) return;
+        if (NeedsOpenMainGate() && !_mainLocked)
+        {
+            LockMainWindow();
+        }
+        else if (S.PasswordEnabled && S.ProtectOpenSecurity && _securityRenderedUnlocked && !IsSecurityUnlockedNow())
+        {
+            _securityUnlocked = false;
+            RenderSecurityContent();
+        }
+    }
+
+    private void LockMainWindow()
+    {
+        _mainLocked = true;
+        _securityUnlocked = false;
+        ShowOpenMainLockPanel();
+    }
+
     private StackPanel CreateOpenMainLockPanel()
     {
         var panel = new StackPanel
@@ -1256,6 +1317,7 @@ public partial class MainWindow : Window
     {
         if (_securityBody == null) return;
         _securityBody.Children.Clear();
+        _securityRenderedUnlocked = false;
         var s = S;
 
         if (!s.PasswordEnabled)
@@ -1269,7 +1331,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        bool needGate = s.ProtectOpenSecurity && !_securityUnlocked && !SecurityService.SessionAlt;
+        bool needGate = s.ProtectOpenSecurity && !IsSecurityUnlockedNow();
         if (needGate)
         {
             _securityBody.Children.Add(new TextBlock
@@ -1296,6 +1358,19 @@ public partial class MainWindow : Window
             Text = "已启用密码保护（保护范围：" + (scope.Length > 0 ? scope.ToString().Trim() : "无") + "）",
             FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap
         });
+
+        var sessRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        sessRow.Children.Add(MakeLabel("验证后保持解锁"));
+        var sessBox = MakeNumberBox(1, 1440, S.SecuritySessionMinutes, 1, 120);
+        sessBox.ValueChanged += (_, _) => { S.SecuritySessionMinutes = (int)sessBox.Value; S.Save(); };
+        sessRow.Children.Add(sessBox);
+        sessRow.Children.Add(new TextBlock
+        {
+            Text = "分钟（超时或关闭窗口再打开需重新验证）",
+            FontSize = 12, Foreground = Palette.TextMuted, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap
+        });
+        _securityBody.Children.Add(sessRow);
+
         _securityBody.Children.Add(MakeButton("修改密码", (_) => OpenSetPassword("修改密码")));
         _securityBody.Children.Add(MakeButton("关闭密码保护", (_) => DisablePasswordProtection()));
         if (SecurityService.SessionAlt)
@@ -1311,6 +1386,8 @@ public partial class MainWindow : Window
             _securityBody.Children.Add(new TextBlock { Text = "已设置保密问题：" + s.SecurityQuestion, FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
         else
             _securityBody.Children.Add(new TextBlock { Text = "未设置保密问题（忘记密码时将无法自助重置，可先关闭密码保护再重新设置）。", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
+
+        _securityRenderedUnlocked = true;
     }
 
     private void OpenSetPassword(string title)

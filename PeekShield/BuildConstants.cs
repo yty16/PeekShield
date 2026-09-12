@@ -4,7 +4,7 @@ internal static class BuildConstants
 {
     public const string AppName = "PeekShield";
     public const string AppNameZh = "窥屿盾";
-    public const string Version = "1.2.0.0";
+    public const string Version = "1.2.0.1";
 
     internal const string _buildToken = "eXR5MTY=";
     internal static string BuildSignature => _buildToken;
