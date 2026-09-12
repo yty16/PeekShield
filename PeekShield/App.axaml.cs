@@ -66,6 +66,7 @@ public partial class App : Application
             MainWindow.Instance = main;
 
             PeekShieldEngine.Instance.OpenSettingsRequested += MainWindow.ShowSettings;
+            PeekShieldEngine.Instance.OpenSecurityRequested += MainWindow.ShowSecurity;
             PeekShieldEngine.Instance.OpenPrivacyRequested += MainWindow.ShowPrivacy;
 
             main.Closing += (_, e) =>

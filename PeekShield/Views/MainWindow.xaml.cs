@@ -56,7 +56,9 @@ public partial class MainWindow : Window
 
     private Grid? _lockHost;
     private StackPanel? _securityBody;
+    private Border? _securityCard;
     private bool _securityUnlocked;
+    private bool _mainLocked;
 
     private class CamItem
     {
@@ -93,15 +95,66 @@ public partial class MainWindow : Window
         ThemeService.Changed += RebuildUi;
 
         if (NeedsOpenMainGate())
+        {
+            _mainLocked = true;
             ShowOpenMainLockPanel();
+        }
         else
+        {
+            _mainLocked = false;
             Build();
+        }
         RefreshStatus();
     }
 
     public static void ShowSettings()
     {
-        Instance?.Show();
+        var w = Instance;
+        if (w == null) return;
+        w.Show();
+        if (w.WindowState == WindowState.Minimized) w.WindowState = WindowState.Normal;
+        w.Activate();
+    }
+
+    public static void ShowSecurity()
+    {
+        var w = Instance;
+        if (w == null) return;
+        w.Show();
+        if (w.WindowState == WindowState.Minimized) w.WindowState = WindowState.Normal;
+        w.Activate();
+        w.RevealSecurity();
+    }
+
+    private void RevealSecurity()
+    {
+        if (_mainLocked)
+        {
+            var r = PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
+            if (r != PasswordWindow.Outcome.Ok && r != PasswordWindow.Outcome.Recovery) return;
+            _mainLocked = false;
+            Content = _lockHost;
+            Build();
+            RefreshStatus();
+        }
+        if (S.PasswordEnabled && S.ProtectOpenSecurity && !_securityUnlocked && !SecurityService.SessionAlt)
+        {
+            var r = PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
+            if (r == PasswordWindow.Outcome.Ok || r == PasswordWindow.Outcome.Recovery)
+            {
+                _securityUnlocked = true;
+                RenderSecurityContent();
+            }
+            else
+                return;
+        }
+        ScrollToSecurity();
+    }
+
+    private void ScrollToSecurity()
+    {
+        if (_securityCard != null)
+            _securityCard.BringIntoView();
     }
 
     private void Build()
@@ -1129,6 +1182,7 @@ public partial class MainWindow : Window
         var r = PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
         if (r == PasswordWindow.Outcome.Ok || r == PasswordWindow.Outcome.Recovery)
         {
+            _mainLocked = false;
             Content = _lockHost;
             Build();
             RefreshStatus();
@@ -1139,7 +1193,19 @@ public partial class MainWindow : Window
     {
         var body = AddCard("安全设置");
         _securityBody = body;
+        _securityCard = FindCard(body);
         RenderSecurityContent();
+    }
+
+    private static Border? FindCard(StackPanel body)
+    {
+        var parent = body.Parent;
+        while (parent != null)
+        {
+            if (parent is Border b) return b;
+            parent = parent.Parent;
+        }
+        return null;
     }
 
     private void RenderSecurityContent()
