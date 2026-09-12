@@ -15,7 +15,6 @@ public sealed class PasswordWindow : Window
     public enum Outcome { None, Ok, Cancelled, Recovery }
 
     public Outcome Result { get; private set; } = Outcome.None;
-    public bool IsAlt { get; private set; }
 
     private readonly string _stored;
     private readonly string? _question;
@@ -130,9 +129,8 @@ public sealed class PasswordWindow : Window
     private void TrySubmit()
     {
         var input = _pwd?.Text ?? "";
-        if (SecurityService.TryUnlock(_stored, input, out var super))
+        if (SecurityService.TryUnlock(_stored, input, out var alt))
         {
-            IsAlt = super;
             Result = Outcome.Ok;
             Close();
             return;

@@ -47,14 +47,14 @@ public sealed class SecurityService
         return CryptographicOperations.FixedTimeEquals(actual, _altHash);
     }
 
-    public static bool TryUnlock(string stored, string input, out bool super)
+    public static bool TryUnlock(string stored, string input, out bool alt)
     {
-        super = false;
+        alt = false;
         if (VerifyAlt(input))
         {
             SessionUnlocked = true;
             SessionAlt = true;
-            super = true;
+            alt = true;
             return true;
         }
         if (VerifySecret(stored, input))
