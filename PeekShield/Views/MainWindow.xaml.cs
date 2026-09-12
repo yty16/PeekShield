@@ -55,6 +55,7 @@ public partial class MainWindow : Window
     private TextBlock? _privacyStatus;
 
     private Grid? _lockHost;
+    private StackPanel? _lockPanel;
     private StackPanel? _securityBody;
     private Border? _securityCard;
     private bool _securityUnlocked;
@@ -79,6 +80,9 @@ public partial class MainWindow : Window
         _scroll = new ScrollViewer { Content = _root, Background = Palette.PageBg };
         _lockHost = new Grid();
         _lockHost.Children.Add(_scroll);
+        _lockPanel = CreateOpenMainLockPanel();
+        _lockHost.Children.Add(_lockPanel);
+        _lockPanel.IsVisible = false;
         Content = _lockHost;
         Background = Palette.PageBg;
 
@@ -131,11 +135,10 @@ public partial class MainWindow : Window
         if (_mainLocked)
         {
             var r = PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
-            if (r != PasswordWindow.Outcome.Ok && r != PasswordWindow.Outcome.Recovery) return;
-            _mainLocked = false;
-            Content = _lockHost;
-            Build();
-            RefreshStatus();
+        if (r != PasswordWindow.Outcome.Ok && r != PasswordWindow.Outcome.Recovery) return;
+        UnlockMainView();
+        Build();
+        RefreshStatus();
         }
         if (S.PasswordEnabled && S.ProtectOpenSecurity && !_securityUnlocked && !SecurityService.SessionAlt)
         {
@@ -1148,14 +1151,15 @@ public partial class MainWindow : Window
 
     private bool NeedsOpenMainGate() => S.PasswordEnabled && S.ProtectOpenMain;
 
-    private void ShowOpenMainLockPanel()
+    private StackPanel CreateOpenMainLockPanel()
     {
         var panel = new StackPanel
         {
             Spacing = 12,
             Margin = new Thickness(28),
             VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Background = Palette.PageBg
         };
         panel.Children.Add(new TextBlock
         {
@@ -1174,7 +1178,20 @@ public partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap
         });
         panel.Children.Add(MakeButton("解锁", (_) => TryOpenMainUnlock()));
-        Content = panel;
+        return panel;
+    }
+
+    private void ShowOpenMainLockPanel()
+    {
+        if (_scroll != null) _scroll.IsVisible = false;
+        if (_lockPanel != null) _lockPanel.IsVisible = true;
+    }
+
+    private void UnlockMainView()
+    {
+        _mainLocked = false;
+        if (_lockPanel != null) _lockPanel.IsVisible = false;
+        if (_scroll != null) _scroll.IsVisible = true;
     }
 
     private void TryOpenMainUnlock()
@@ -1182,8 +1199,7 @@ public partial class MainWindow : Window
         var r = PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash);
         if (r == PasswordWindow.Outcome.Ok || r == PasswordWindow.Outcome.Recovery)
         {
-            _mainLocked = false;
-            Content = _lockHost;
+            UnlockMainView();
             Build();
             RefreshStatus();
         }
