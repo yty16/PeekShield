@@ -217,6 +217,19 @@ public class PeekShieldSettings
             System.Diagnostics.Debug.WriteLine($"[PeekShield] Settings save error: {ex.Message}");
         }
     }
+
+    public void ClearPasswordProtection()
+    {
+        PasswordEnabled = false;
+        PasswordHash = "";
+        SecurityQuestion = "";
+        SecurityAnswerHash = "";
+        ProtectExit = false;
+        ProtectUninstall = false;
+        ProtectOpenMain = false;
+        ProtectOpenSecurity = false;
+        Save();
+    }
 }
 
 public class ProtectedEntry
