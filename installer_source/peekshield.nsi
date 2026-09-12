@@ -17,6 +17,11 @@ ShowInstDetails show
 ShowUninstDetails show
 
 Section "Install"
+    ; 关闭可能正在运行的旧版本进程，避免文件被占用导致覆盖失败
+    DetailPrint "正在关闭已运行的 PeekShield 进程..."
+    ExecWait 'taskkill /F /IM "${EXENAME}" /FI "STATUS eq RUNNING"' $0
+    Sleep 500
+
     SetOutPath "$INSTDIR"
     File /r /x "*.nsi" /x "setup.cmd" /x "*.p7s" /x "*.h" /x "*.lib" /x "*.pdb" "${PROJECTROOT}\dist\win-x64\*.*"
     WriteUninstaller "$INSTDIR\Uninstall.exe"
