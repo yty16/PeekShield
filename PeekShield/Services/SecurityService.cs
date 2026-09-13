@@ -17,6 +17,7 @@ public sealed class SecurityService
 
     public static bool SessionUnlocked { get; private set; }
     public static bool SessionAlt { get; private set; }
+    public static bool SessionFace { get; private set; }
     private static DateTime _unlockAt = DateTime.MinValue;
 
     public static PeekShieldSettings? Settings { get; set; }
@@ -25,6 +26,7 @@ public sealed class SecurityService
     {
         SessionUnlocked = false;
         SessionAlt = false;
+        SessionFace = false;
         _unlockAt = DateTime.MinValue;
     }
 
@@ -86,6 +88,14 @@ public sealed class SecurityService
             return true;
         }
         return false;
+    }
+
+    public static void SetFaceUnlocked()
+    {
+        ResetLockout();
+        SessionUnlocked = true;
+        SessionFace = true;
+        _unlockAt = DateTime.UtcNow;
     }
 
     public static bool IsLocked(out int remainingMinutes)

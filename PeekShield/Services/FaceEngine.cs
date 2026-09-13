@@ -38,6 +38,8 @@ public class FaceEngine : IDisposable
 
     public bool IsFaceReady => _recognizer.IsReady;
 
+    public static double OwnerMatchThreshold(int sensitivity) => OwnerThresh[Math.Clamp(sensitivity, 0, 2)];
+
     public List<FaceInfo> Detect(Mat frame, int sensitivity, bool lowLight, bool mirrorPosterFilter)
     {
         sensitivity = Math.Clamp(sensitivity, 0, 2);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -22,6 +23,7 @@ public class PeekShieldEngine
     private PeekShieldSettings _settings = new();
     private volatile FaceRecognizer? _recognizer;
     private FaceVerifier? _verifier;
+    private FaceVerifier? _unlockVerifier;
     private volatile FaceEngine? _faceEngine;
     private Task<bool>? _faceEngineTask;
     private readonly object _faceLock = new();
@@ -78,11 +80,13 @@ public class PeekShieldEngine
     public bool IsPeekActive => _peekActive;
     public string CameraError => _cameraError;
     public bool IsEnrolled => _verifier?.IsEnrolled ?? false;
+    public bool IsFaceUnlockEnrolled => _unlockVerifier?.IsEnrolled ?? false;
 
     public double LastMatchDistance => _verifier?.LastDistance ?? -1;
     public double LastMatchThreshold => _verifier?.LastThreshold ?? -1;
 
     private static string EnrollDir => Platform.EnrollDir;
+    private static string UnlockDir => Path.Combine(EnrollDir, "unlock");
 
     public void Initialize()
     {
@@ -90,6 +94,11 @@ public class PeekShieldEngine
         SecurityService.Settings = _settings;
         _verifier = new FaceVerifier();
         _verifier.Load(EnrollDir);
+
+        _unlockVerifier = new FaceVerifier();
+        _unlockVerifier.Load(UnlockDir);
+        if (_unlockVerifier.IsEnrolled && !_settings.FaceUnlockEnabled) { _settings.FaceUnlockEnabled = true; _settings.Save(); }
+        if (!_unlockVerifier.IsEnrolled && _settings.FaceUnlockEnabled) { _settings.FaceUnlockEnabled = false; _settings.Save(); }
 
         _fg.Start();
 
@@ -803,6 +812,213 @@ public class PeekShieldEngine
         PushStatus(_peekActive ? EngineStatus.Peek : EngineStatus.NotEnrolled);
     }
 
+    public async Task<bool> EnrollUnlockAsync(int samples = 10, Action<int>? progress = null)
+    {
+        if (!_settings.PasswordEnabled) return false;
+        if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
+        StopLoop();
+        if (!await EnsureFaceEngineAsync())
+        {
+            _cameraError = "人脸识别模型加载失败，无法录入刷脸解锁";
+            LoggerService.LogInfo("刷脸解锁录入前模型按需加载失败");
+            return false;
+        }
+        bool wasEnrolled = _unlockVerifier!.IsEnrolled;
+        _unlockVerifier.Clear();
+        bool ok = false;
+        var seen = new List<float[]>();
+        try
+        {
+            using var cam = new CameraService();
+            if (!cam.Open(_settings.CameraIndex))
+            {
+                _cameraError = cam.LastError ?? "摄像头打开失败";
+                RestorePriorUnlock(wasEnrolled);
+                return false;
+            }
+            using var frame = new Mat();
+            int collected = 0;
+            int attempts = 0;
+            for (int i = 0; i < samples + 30 && collected < samples; i++)
+            {
+                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(frame);
+                if (faces.Count == 0) { await SafeDelay(200, default); continue; }
+                attempts++;
+                var emb = faces[0].Embedding;
+                bool dup = seen.Any(s => EmbDist(emb, s) < 0.25);
+                if (!dup)
+                {
+                    seen.Add(emb);
+                    if (_unlockVerifier.AddSample(emb)) { collected++; progress?.Invoke(collected); }
+                }
+                await SafeDelay(300, default);
+            }
+            cam.Close();
+            ok = collected >= 3;
+            if (ok)
+            {
+                _unlockVerifier.Save(UnlockDir);
+                _settings.FaceUnlockEnabled = true;
+                LoggerService.LogInfo($"刷脸解锁录入成功：尝试={attempts} 接受={collected} 离散度={_unlockVerifier.SelfGap:F3}");
+            }
+            else
+            {
+                RestorePriorUnlock(wasEnrolled);
+                LoggerService.LogInfo($"刷脸解锁录入失败：尝试={attempts} 接受={collected}（需至少 3 张合格样本{(wasEnrolled ? "，已恢复此前录入" : "")}）");
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("刷脸解锁录入过程异常：" + ex);
+            RestorePriorUnlock(wasEnrolled);
+            ok = false;
+        }
+        finally
+        {
+            _settings.Save();
+            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+        }
+        return ok;
+    }
+
+    private void RestorePriorUnlock(bool wasEnrolled)
+    {
+        if (wasEnrolled)
+        {
+            try { _unlockVerifier!.Load(UnlockDir); } catch { }
+            _settings.FaceUnlockEnabled = _unlockVerifier!.IsEnrolled;
+        }
+        else
+        {
+            _unlockVerifier!.Clear();
+            _settings.FaceUnlockEnabled = false;
+        }
+    }
+
+    public async Task<bool> EnrollUnlockFromPhotoAsync(string imagePath, Action<int>? progress = null)
+    {
+        if (!_settings.PasswordEnabled) return false;
+        if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
+        StopLoop();
+        if (!await EnsureFaceEngineAsync())
+        {
+            _cameraError = "人脸识别模型加载失败，无法录入刷脸解锁";
+            LoggerService.LogInfo("刷脸解锁照片录入前模型按需加载失败");
+            return false;
+        }
+        bool wasEnrolled = _unlockVerifier!.IsEnrolled;
+        _unlockVerifier.Clear();
+        bool ok = false;
+        try
+        {
+            if (!File.Exists(imagePath)) { RestorePriorUnlock(wasEnrolled); return false; }
+            using var img = Cv2.ImRead(imagePath, ImreadModes.Color);
+            if (img.Empty()) { RestorePriorUnlock(wasEnrolled); return false; }
+
+            int collected = 0;
+            var faces = _recognizer!.Detect(img);
+            if (faces.Count == 0)
+            {
+                RestorePriorUnlock(wasEnrolled);
+                LoggerService.LogInfo("刷脸解锁照片录入失败：未在照片中检测到人脸，请换一张正脸清晰照片");
+                return false;
+            }
+            if (_unlockVerifier.AddSample(faces[0].Embedding)) collected++;
+            using var flip = new Mat(); Cv2.Flip(img, flip, FlipMode.Y);
+            var f2 = _recognizer.Detect(flip);
+            if (f2.Count > 0 && _unlockVerifier.AddSample(f2[0].Embedding)) collected++;
+
+            ok = collected >= 1;
+            if (ok)
+            {
+                _unlockVerifier.Save(UnlockDir);
+                _settings.FaceUnlockEnabled = true;
+                LoggerService.LogInfo($"刷脸解锁照片录入成功：接受={collected} 离散度={_unlockVerifier.SelfGap:F3}");
+            }
+            else
+            {
+                RestorePriorUnlock(wasEnrolled);
+                LoggerService.LogInfo($"刷脸解锁照片录入失败：接受={collected}（请换一张正脸清晰照片{(wasEnrolled ? "，已恢复此前录入" : "")})");
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("刷脸解锁照片录入过程异常：" + ex);
+            RestorePriorUnlock(wasEnrolled);
+            ok = false;
+        }
+        finally
+        {
+            _settings.Save();
+            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+        }
+        return ok;
+    }
+
+    public async Task<bool> VerifyUnlockAsync(Action<string>? status = null)
+    {
+        if (_unlockVerifier == null || !_unlockVerifier.IsEnrolled) return false;
+        if (!ConsentService.CanProcessFace(_settings)) return false;
+        StopLoop();
+        if (!await EnsureFaceEngineAsync())
+        {
+            status?.Invoke("人脸识别模型加载失败，请使用密码");
+            LoggerService.LogInfo("刷脸解锁验证前模型按需加载失败");
+            return false;
+        }
+        bool ok = false;
+        try
+        {
+            using var cam = new CameraService();
+            if (!cam.Open(_settings.CameraIndex))
+            {
+                status?.Invoke("摄像头打开失败，请使用密码");
+                return false;
+            }
+            using var frame = new Mat();
+            double th = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
+            int attempts = 0;
+            var sw = Stopwatch.StartNew();
+            while (sw.Elapsed < TimeSpan.FromSeconds(8) && !ok)
+            {
+                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(frame);
+                if (faces.Count == 0) { await SafeDelay(200, default); continue; }
+                attempts++;
+                var (isOwner, dist) = _unlockVerifier.Verify(faces[0].Embedding, th);
+                status?.Invoke("人脸比对中…");
+                if (isOwner) { ok = true; break; }
+                await SafeDelay(200, default);
+            }
+            cam.Close();
+            LoggerService.LogInfo($"刷脸解锁验证：尝试={attempts} 结果={(ok ? "通过" : "未匹配")} 阈值={th:F3} 耗时={sw.Elapsed.TotalSeconds:F1}s");
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("刷脸解锁验证异常：" + ex);
+            ok = false;
+        }
+        finally
+        {
+            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+        }
+        return ok;
+    }
+
+    public void ClearUnlock()
+    {
+        _unlockVerifier?.Clear();
+        try
+        {
+            if (Directory.Exists(UnlockDir))
+                foreach (var f in Directory.GetFiles(UnlockDir)) File.Delete(f);
+        }
+        catch { }
+        _settings.FaceUnlockEnabled = false;
+        _settings.Save();
+    }
+
     private void ResetHistory()
     {
         _faceCountHistory.Clear();
@@ -846,5 +1062,6 @@ public class PeekShieldEngine
         _recognizer?.Dispose();
         _faceEngine?.Dispose();
         _verifier?.Dispose();
+        _unlockVerifier?.Dispose();
     }
 }

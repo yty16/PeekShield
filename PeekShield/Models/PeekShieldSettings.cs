@@ -119,6 +119,8 @@ public class PeekShieldSettings
     public DateTime PasswordLockoutUntil { get; set; } = DateTime.MinValue;
     public int PasswordLockoutLevel { get; set; } = 0;
 
+    public bool FaceUnlockEnabled { get; set; } = false;
+
     public int SettingsVersion { get; set; } = 0;
 
     private static string SettingsPath => Path.Combine(Platform.AppDataDir, BuildConstants.SettingsFileName);
@@ -186,6 +188,12 @@ public class PeekShieldSettings
             PasswordLockoutLevel = 0;
             changed = true;
         }
+        if (SettingsVersion < 4)
+        {
+            SettingsVersion = 4;
+            if (FaceUnlockEnabled && !PasswordEnabled) FaceUnlockEnabled = false;
+            changed = true;
+        }
         if (changed) Save();
     }
 
@@ -243,7 +251,23 @@ public class PeekShieldSettings
         PasswordFailedAttempts = 0;
         PasswordLockoutUntil = DateTime.MinValue;
         PasswordLockoutLevel = 0;
+        FaceUnlockEnabled = false;
+        RemoveUnlockData();
         Save();
+    }
+
+    private static void RemoveUnlockData()
+    {
+        try
+        {
+            var dir = Path.Combine(Platform.EnrollDir, "unlock");
+            if (Directory.Exists(dir))
+            {
+                foreach (var f in Directory.GetFiles(dir)) File.Delete(f);
+                Directory.Delete(dir);
+            }
+        }
+        catch { }
     }
 }
 

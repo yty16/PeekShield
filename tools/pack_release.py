@@ -1,10 +1,10 @@
-import os, stat, tarfile, zipfile, struct, io
+import os, stat, tarfile, zipfile, struct, io, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
 INSTALLER = os.path.join(ROOT, "installer")
 ICON = os.path.join(ROOT, "installer_source", "Icon.png")
-VERSION = "1.2.0.2"
+VERSION = "1.2.1.0"
 
 def walk_files(base):
     out = []
@@ -139,7 +139,6 @@ def build_app_zip():
             rel = os.path.relpath(s, src)
             t = os.path.join(macos, rel)
             os.makedirs(os.path.dirname(t), exist_ok=True)
-            import shutil
             shutil.copy2(s, t)
     info = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'

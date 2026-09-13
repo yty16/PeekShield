@@ -160,7 +160,7 @@ public partial class App : Application
             var w = MainWindow.Instance;
             if (w != null)
             {
-                var dlg = new PasswordWindow("验证以退出", "退出应用前需验证密码。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash);
+                var dlg = new PasswordWindow("验证以退出", "退出应用前需验证密码。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash, PeekShieldEngine.Instance, s.PasswordEnabled && s.FaceUnlockEnabled);
                 dlg.Closed += (_, _) =>
                 {
                     if (dlg.Result == PeekShield.Views.PasswordWindow.Outcome.Ok ||
@@ -202,7 +202,7 @@ public partial class App : Application
 
         var w = new PasswordWindow("卸载验证",
             "为保障你的隐私，卸载本软件前需验证密码。若已设置保密问题，可通过回答保密问题来验证。",
-            settings.PasswordHash, settings.SecurityQuestion, settings.SecurityAnswerHash);
+            settings.PasswordHash, settings.SecurityQuestion, settings.SecurityAnswerHash, PeekShieldEngine.Instance, settings.PasswordEnabled && settings.FaceUnlockEnabled);
         w.Closed += (_, _) =>
         {
             int code = (w.Result == PeekShield.Views.PasswordWindow.Outcome.Ok ||

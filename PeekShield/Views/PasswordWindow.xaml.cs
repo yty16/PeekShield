@@ -20,18 +20,24 @@ public sealed class PasswordWindow : Window
     private readonly string _stored;
     private readonly string? _question;
     private readonly string? _answerHash;
+    private readonly PeekShieldEngine? _engine;
+    private readonly bool _faceUnlockAvailable;
     private TextBox? _pwd;
     private TextBlock? _hint;
     private StackPanel? _recovery;
     private TextBox? _ans;
     private Button? _ok;
+    private Button? _faceBtn;
+    private bool _busy;
     private readonly DispatcherTimer _lockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
-    public PasswordWindow(string title, string prompt, string storedHash, string? question = null, string? answerHash = null)
+    public PasswordWindow(string title, string prompt, string storedHash, string? question = null, string? answerHash = null, PeekShieldEngine? engine = null, bool faceUnlockAvailable = false)
     {
         _stored = storedHash;
         _question = question;
         _answerHash = answerHash;
+        _engine = engine;
+        _faceUnlockAvailable = faceUnlockAvailable;
 
         Title = title;
         Width = 420;
@@ -112,6 +118,22 @@ public sealed class PasswordWindow : Window
             panel.Children.Add(_recovery);
         }
 
+        if (_faceUnlockAvailable && _engine != null)
+        {
+            _faceBtn = new Button
+            {
+                Content = "使用人脸解锁",
+                MinWidth = 120,
+                Padding = new Thickness(10, 5),
+                Margin = new Thickness(0, 8, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Color.Parse("#16A34A")),
+                Foreground = new SolidColorBrush(Colors.White)
+            };
+            _faceBtn.Click += (_, _) => _ = TryFaceUnlock();
+            panel.Children.Add(_faceBtn);
+        }
+
         Content = panel;
         _lockTimer.Tick += (_, _) => UpdateLockCountdown();
         Loaded += (_, _) => _pwd?.Focus();
@@ -119,9 +141,9 @@ public sealed class PasswordWindow : Window
         RefreshLockoutUi();
     }
 
-    public static async Task<Outcome> ShowVerify(Window? owner, string title, string prompt, string storedHash, string? question = null, string? answerHash = null)
+    public static async Task<Outcome> ShowVerify(Window? owner, string title, string prompt, string storedHash, string? question = null, string? answerHash = null, PeekShieldEngine? engine = null, bool faceUnlockAvailable = false)
     {
-        var w = new PasswordWindow(title, prompt, storedHash, question, answerHash);
+        var w = new PasswordWindow(title, prompt, storedHash, question, answerHash, engine, faceUnlockAvailable);
         if (owner != null) await w.ShowDialog(owner);
         else w.Show();
         return w.Result;
@@ -167,6 +189,33 @@ public sealed class PasswordWindow : Window
             }
         }
         if (_pwd != null) _pwd.Text = "";
+    }
+
+    private async Task TryFaceUnlock()
+    {
+        if (_busy || _engine == null) return;
+        _busy = true;
+        if (_ok != null) _ok.IsEnabled = false;
+        if (_faceBtn != null) _faceBtn.IsEnabled = false;
+        if (_hint != null) { _hint.Text = "正在调用摄像头进行人脸验证…"; _hint.IsVisible = true; }
+        bool ok = false;
+        try
+        {
+            ok = await _engine.VerifyUnlockAsync(msg => { if (_hint != null) { _hint.Text = msg; _hint.IsVisible = true; } });
+        }
+        catch { ok = false; }
+        if (ok)
+        {
+            SecurityService.SetFaceUnlocked();
+            StopLockTimer();
+            Result = Outcome.Ok;
+            Close();
+            return;
+        }
+        if (_hint != null) { _hint.Text = "人脸未匹配，请重试或使用密码解锁。"; _hint.IsVisible = true; }
+        if (_ok != null) _ok.IsEnabled = true;
+        if (_faceBtn != null) _faceBtn.IsEnabled = true;
+        _busy = false;
     }
 
     private void RefreshLockoutUi()
