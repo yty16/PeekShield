@@ -1006,6 +1006,60 @@ public class PeekShieldEngine
         return ok;
     }
 
+    public bool QuickVerifyAvailable =>
+        _settings.PasswordEnabled && _settings.QuickVerifyEnabled && IsEnrolled && ConsentService.CanProcessFace(_settings);
+
+    public async Task<bool> TryAutoVerifyAsync(Action<string>? status = null)
+    {
+        if (_verifier == null || !_verifier.IsEnrolled) return false;
+        if (!_settings.PasswordEnabled || !_settings.QuickVerifyEnabled) return false;
+        if (!ConsentService.CanProcessFace(_settings)) return false;
+        StopLoop();
+        if (!await EnsureFaceEngineAsync())
+        {
+            status?.Invoke("人脸识别模型加载失败，请使用密码");
+            LoggerService.LogInfo("快捷验证前模型按需加载失败");
+            return false;
+        }
+        bool ok = false;
+        try
+        {
+            using var cam = new CameraService();
+            if (!cam.Open(_settings.CameraIndex))
+            {
+                status?.Invoke("摄像头打开失败，请使用密码");
+                return false;
+            }
+            using var frame = new Mat();
+            double th = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
+            int attempts = 0;
+            var sw = Stopwatch.StartNew();
+            while (sw.Elapsed < TimeSpan.FromSeconds(8) && !ok)
+            {
+                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(frame);
+                if (faces.Count == 0) { await SafeDelay(200, default); continue; }
+                attempts++;
+                var (isOwner, dist) = _verifier.Verify(faces[0].Embedding, th);
+                status?.Invoke("正在识别机主…（无需操作）");
+                if (isOwner) { ok = true; break; }
+                await SafeDelay(200, default);
+            }
+            cam.Close();
+            LoggerService.LogInfo($"快捷验证：尝试={attempts} 结果={(ok ? "通过" : "未匹配")} 阈值={th:F3} 耗时={sw.Elapsed.TotalSeconds:F1}s");
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("快捷验证异常：" + ex);
+            ok = false;
+        }
+        finally
+        {
+            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+        }
+        return ok;
+    }
+
     public void ClearUnlock()
     {
         _unlockVerifier?.Clear();

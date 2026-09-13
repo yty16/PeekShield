@@ -121,6 +121,8 @@ public class PeekShieldSettings
 
     public bool FaceUnlockEnabled { get; set; } = false;
 
+    public bool QuickVerifyEnabled { get; set; } = false;
+
     public int SettingsVersion { get; set; } = 0;
 
     private static string SettingsPath => Path.Combine(Platform.AppDataDir, BuildConstants.SettingsFileName);
@@ -194,6 +196,12 @@ public class PeekShieldSettings
             if (FaceUnlockEnabled && !PasswordEnabled) FaceUnlockEnabled = false;
             changed = true;
         }
+        if (SettingsVersion < 5)
+        {
+            SettingsVersion = 5;
+            if (QuickVerifyEnabled && (!PasswordEnabled || !IsEnrolled)) QuickVerifyEnabled = false;
+            changed = true;
+        }
         if (changed) Save();
     }
 
@@ -252,6 +260,7 @@ public class PeekShieldSettings
         PasswordLockoutUntil = DateTime.MinValue;
         PasswordLockoutLevel = 0;
         FaceUnlockEnabled = false;
+        QuickVerifyEnabled = false;
         RemoveUnlockData();
         Save();
     }

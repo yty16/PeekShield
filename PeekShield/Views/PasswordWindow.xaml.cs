@@ -22,6 +22,7 @@ public sealed class PasswordWindow : Window
     private readonly string? _answerHash;
     private readonly PeekShieldEngine? _engine;
     private readonly bool _faceUnlockAvailable;
+    private readonly bool _quickVerifyAvailable;
     private TextBox? _pwd;
     private TextBlock? _hint;
     private StackPanel? _recovery;
@@ -31,13 +32,14 @@ public sealed class PasswordWindow : Window
     private bool _busy;
     private readonly DispatcherTimer _lockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
-    public PasswordWindow(string title, string prompt, string storedHash, string? question = null, string? answerHash = null, PeekShieldEngine? engine = null, bool faceUnlockAvailable = false)
+    public PasswordWindow(string title, string prompt, string storedHash, string? question = null, string? answerHash = null, PeekShieldEngine? engine = null, bool faceUnlockAvailable = false, bool quickVerifyAvailable = false)
     {
         _stored = storedHash;
         _question = question;
         _answerHash = answerHash;
         _engine = engine;
         _faceUnlockAvailable = faceUnlockAvailable;
+        _quickVerifyAvailable = quickVerifyAvailable;
 
         Title = title;
         Width = 420;
@@ -135,15 +137,19 @@ public sealed class PasswordWindow : Window
         }
 
         Content = panel;
+        Loaded += (_, _) =>
+        {
+            _pwd?.Focus();
+            if (_quickVerifyAvailable && _engine != null) _ = StartQuickVerify();
+        };
         _lockTimer.Tick += (_, _) => UpdateLockCountdown();
-        Loaded += (_, _) => _pwd?.Focus();
         Closed += (_, _) => StopLockTimer();
         RefreshLockoutUi();
     }
 
-    public static async Task<Outcome> ShowVerify(Window? owner, string title, string prompt, string storedHash, string? question = null, string? answerHash = null, PeekShieldEngine? engine = null, bool faceUnlockAvailable = false)
+    public static async Task<Outcome> ShowVerify(Window? owner, string title, string prompt, string storedHash, string? question = null, string? answerHash = null, PeekShieldEngine? engine = null, bool faceUnlockAvailable = false, bool quickVerifyAvailable = false)
     {
-        var w = new PasswordWindow(title, prompt, storedHash, question, answerHash, engine, faceUnlockAvailable);
+        var w = new PasswordWindow(title, prompt, storedHash, question, answerHash, engine, faceUnlockAvailable, quickVerifyAvailable);
         if (owner != null) await w.ShowDialog(owner);
         else w.Show();
         return w.Result;
@@ -216,6 +222,31 @@ public sealed class PasswordWindow : Window
         if (_ok != null) _ok.IsEnabled = true;
         if (_faceBtn != null) _faceBtn.IsEnabled = true;
         _busy = false;
+    }
+
+    private async Task StartQuickVerify()
+    {
+        if (_busy || _engine == null) return;
+        _busy = true;
+        if (_faceBtn != null) _faceBtn.IsEnabled = false;
+        if (_hint != null) { _hint.Text = "正在识别机主…（无需操作，识别成功将自动解锁）"; _hint.IsVisible = true; }
+        bool ok = false;
+        try
+        {
+            ok = await _engine.TryAutoVerifyAsync(msg => { if (_hint != null) { _hint.Text = msg; _hint.IsVisible = true; } });
+        }
+        catch { ok = false; }
+        if (ok)
+        {
+            SecurityService.SetFaceUnlocked();
+            StopLockTimer();
+            Result = Outcome.Ok;
+            Close();
+            return;
+        }
+        _busy = false;
+        if (_faceBtn != null) _faceBtn.IsEnabled = true;
+        if (_hint != null) { _hint.Text = "未识别到机主，请输入密码或使用人脸解锁。"; _hint.IsVisible = true; }
     }
 
     private void RefreshLockoutUi()

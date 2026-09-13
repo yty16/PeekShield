@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private TextBlock? _statusText;
     private TextBlock? _enrollHint;
     private TextBlock? _faceHint;
+    private TextBlock? _quickHint;
     private TextBlock? _camTestText;
     private ComboBox? _camComboBox;
     private ComboBox? _sensComboBox;
@@ -144,7 +145,7 @@ public partial class MainWindow : Window
     {
         if (_mainLocked)
         {
-            var r = await PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled);
+            var r = await PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled, _engine.QuickVerifyAvailable);
             if (r == PasswordWindow.Outcome.Recovery)
             {
                 HandlePasswordRecovery();
@@ -157,7 +158,7 @@ public partial class MainWindow : Window
         }
         if (S.PasswordEnabled && S.ProtectOpenSecurity && !IsSecurityUnlockedNow())
         {
-            var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled);
+            var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled, _engine.QuickVerifyAvailable);
             if (r == PasswordWindow.Outcome.Recovery)
             {
                 HandlePasswordRecovery();
@@ -1281,7 +1282,7 @@ public partial class MainWindow : Window
 
     private async void TryOpenMainUnlock()
     {
-        var r = await PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled);
+        var r = await PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled, _engine.QuickVerifyAvailable);
         if (r == PasswordWindow.Outcome.Recovery)
         {
             HandlePasswordRecovery();
@@ -1342,7 +1343,7 @@ public partial class MainWindow : Window
             });
             _securityBody.Children.Add(MakeButton("验证密码", async (_) =>
             {
-                var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash, _engine, s.FaceUnlockEnabled);
+                var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash, _engine, s.FaceUnlockEnabled, _engine.QuickVerifyAvailable);
                 if (r == PasswordWindow.Outcome.Recovery) { HandlePasswordRecovery(); return; }
                 if (r == PasswordWindow.Outcome.Ok) { _securityUnlocked = true; RenderSecurityContent(); }
             }));
@@ -1373,6 +1374,7 @@ public partial class MainWindow : Window
         _securityBody.Children.Add(sessRow);
 
         BuildFaceUnlockSection(_securityBody);
+        BuildQuickVerifySection(_securityBody);
 
         _securityBody.Children.Add(MakeButton("修改密码", (_) => OpenSetPassword("修改密码")));
         _securityBody.Children.Add(MakeButton("关闭密码保护", (_) => DisablePasswordProtection()));
@@ -1471,6 +1473,73 @@ public partial class MainWindow : Window
             IsVisible = false, Margin = new Thickness(0, 6, 0, 0)
         };
         body.Children.Add(_faceHint);
+    }
+
+    private void BuildQuickVerifySection(StackPanel body)
+    {
+        var sep = new Border
+        {
+            Height = 1,
+            Background = Palette.Border,
+            Margin = new Thickness(0, 10, 0, 8)
+        };
+        body.Children.Add(sep);
+        body.Children.Add(new TextBlock
+        {
+            Text = "快捷验证（自动刷脸解锁，可选）",
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Palette.TextPrimary,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        body.Children.Add(new TextBlock
+        {
+            Text = "开启后，在需要验证的场景（解锁主页面、安全设置、退出、卸载）会先自动通过摄像头识别机主，识别成功即自动解锁，无需输入密码。无需单独录入解锁人脸，直接复用已录入的机主人脸；但需先设置密码且已录入机主人脸。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var cb = MakeCheck("启用快捷验证（自动刷脸解锁）", S.QuickVerifyEnabled, v => DoToggleQuickVerify(v));
+        body.Children.Add(cb);
+
+        _quickHint = new TextBlock
+        {
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            IsVisible = false, Margin = new Thickness(0, 6, 0, 0)
+        };
+        body.Children.Add(_quickHint);
+    }
+
+    private void DoToggleQuickVerify(bool on)
+    {
+        if (!on)
+        {
+            S.QuickVerifyEnabled = false;
+            S.Save();
+            if (_quickHint != null) { _quickHint.Text = "已关闭快捷验证。"; _quickHint.IsVisible = true; }
+            RenderSecurityContent();
+            return;
+        }
+        if (!S.PasswordEnabled)
+        {
+            S.QuickVerifyEnabled = false;
+            S.Save();
+            if (_quickHint != null) { _quickHint.Text = "需先设置密码后才能启用快捷验证。"; _quickHint.IsVisible = true; }
+            RenderSecurityContent();
+            return;
+        }
+        if (!_engine.IsEnrolled)
+        {
+            S.QuickVerifyEnabled = false;
+            S.Save();
+            if (_quickHint != null) { _quickHint.Text = "需先录入机主人脸（设置页「录入人脸」或「上传照片录入」）后才能启用快捷验证。"; _quickHint.IsVisible = true; }
+            RenderSecurityContent();
+            return;
+        }
+        S.QuickVerifyEnabled = true;
+        S.Save();
+        if (_quickHint != null) { _quickHint.Text = "✓ 已启用快捷验证，验证时将自动识别机主解锁。"; _quickHint.IsVisible = true; }
+        RenderSecurityContent();
     }
 
     private async Task DoEnrollUnlock()
