@@ -13,13 +13,31 @@ public static class SingleInstanceService
 
     public static bool TryAcquire()
     {
-        _mutex = new Mutex(true, MutexName, out bool createdNew);
-        if (!createdNew)
+        try
         {
-            try { _mutex.Dispose(); } catch { }
-            _mutex = null;
+            _mutex = new Mutex(true, MutexName, out bool createdNew);
+            if (!createdNew)
+            {
+                // 已存在但不属于本实例：可能是真实次实例，也可能是上次主程序被原生崩溃(abandoned)遗留的废弃互斥量。
+                // 释放本句柄后重试一次：真实实例的句柄仍在、再次打开仍 createdNew=false（安全退出）；
+                // 若为废弃互斥量，释放后 OS 销毁对象、再次打开 createdNew=true（本实例接管，避免守护拉起时全体静默退出）。
+                try { _mutex.Dispose(); } catch { }
+                _mutex = new Mutex(true, MutexName, out createdNew);
+                if (!createdNew)
+                {
+                    try { _mutex.Dispose(); } catch { }
+                    _mutex = null;
+                    return false;
+                }
+            }
+            return true;
         }
-        return createdNew;
+        catch
+        {
+            try { _mutex?.Dispose(); } catch { }
+            _mutex = null;
+            return false;
+        }
     }
 
     public static bool TrySendShowToExisting()

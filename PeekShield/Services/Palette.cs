@@ -15,6 +15,7 @@ internal static class Palette
     public static ISolidColorBrush ButtonBg => Solid(Dark ? "#353A45" : "#E5E7EB");
     public static ISolidColorBrush Border => Solid(Dark ? "#2E333D" : "#E2E8F0");
     public static ISolidColorBrush Danger => Solid(Dark ? "#EF5350" : "#DC2626");
+    public static ISolidColorBrush Accent => Solid(Dark ? "#4C8BF5" : "#2563EB");
 
     private static ISolidColorBrush Solid(string hex) => (ISolidColorBrush)Brush.Parse(hex);
 }

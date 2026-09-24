@@ -6,6 +6,13 @@ using PeekShield.Services;
 
 namespace PeekShield.Models;
 
+public enum CrashBehavior
+{
+    SilentRestart = 0,
+    PromptRestart = 1,
+    ExitApp = 2
+}
+
 public class PeekShieldSettings
 {
     private static readonly string _buildToken = "eXR5MTY=";
@@ -123,6 +130,10 @@ public class PeekShieldSettings
 
     public bool QuickVerifyEnabled { get; set; } = false;
 
+    public bool ProcessGuardEnabled { get; set; } = false;
+
+    public CrashBehavior CrashBehaviorOnCrash { get; set; } = CrashBehavior.SilentRestart;
+
     public int SettingsVersion { get; set; } = 0;
 
     private static string SettingsPath => Path.Combine(Platform.AppDataDir, BuildConstants.SettingsFileName);
@@ -202,6 +213,12 @@ public class PeekShieldSettings
             if (QuickVerifyEnabled && (!PasswordEnabled || !IsEnrolled)) QuickVerifyEnabled = false;
             changed = true;
         }
+        if (SettingsVersion < 6)
+        {
+            SettingsVersion = 6;
+            if (ProcessGuardEnabled && !PasswordEnabled) ProcessGuardEnabled = false;
+            changed = true;
+        }
         if (changed) Save();
     }
 
@@ -261,6 +278,7 @@ public class PeekShieldSettings
         PasswordLockoutLevel = 0;
         FaceUnlockEnabled = false;
         QuickVerifyEnabled = false;
+        ProcessGuardEnabled = false;
         RemoveUnlockData();
         Save();
     }

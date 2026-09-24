@@ -92,14 +92,4 @@ public static class LoggerService
         return n;
     }
 
-    public static void SaveDebugFrame(Mat frame, PeekShieldSettings s)
-    {
-        if (!s.ScreenshotOnPeek) return;
-        try
-        {
-            Ensure();
-            Cv2.ImWrite(Path.Combine(LogDir, "debug_frame.jpg"), frame);
-        }
-        catch { }
-    }
 }

@@ -40,6 +40,7 @@ public class PeekShieldEngine
     private int _faceCount;
     private bool _ownerPresent;
     private bool _loggedFrame;
+    private int _consecutiveBlackFrames;
     private string _lastCameraErrorLog = "";
     private EngineStatus _status = EngineStatus.Idle;
     private string _cameraError = "";
@@ -47,8 +48,6 @@ public class PeekShieldEngine
     private DateTime _lastStatusLog = DateTime.MinValue;
     private int _lastLoggedFaceCount = -1;
     private bool _lastLoggedOwnerPresent;
-    private DateTime _lastDebugSave = DateTime.MinValue;
-    private int _debugSavedCount;
 
     private readonly Queue<int> _faceCountHistory = new();
     private readonly Queue<bool> _ownerHistory = new();
@@ -257,6 +256,29 @@ public class PeekShieldEngine
                     continue;
                 }
 
+                // 黑帧/垃圾帧保护：摄像头刚打开或被其它程序抢占时常返回全黑帧（亮度均值≈0）。
+                // 注意：绝不在此关闭/重开摄像头——刚打开的摄像头前几帧全黑属正常自恢复，
+                // 强行 Close+Open 会在部分不稳定驱动上触发 videoio 原生 AV（进程瞬间崩溃、无托管堆栈）。
+                // 这里只跳过本帧、不喂给 dlib，连续 30 帧全黑才判定设备异常并进入 NoCamera 退避。
+                double frameMean = Cv2.Mean(frame).Val0;
+                if (frameMean < 3.0)
+                {
+                    _consecutiveBlackFrames++;
+                    if (_consecutiveBlackFrames >= 30)
+                    {
+                        _cameraError = "摄像头持续返回空画面（可能被其它程序占用或驱动异常）";
+                        PushStatus(EngineStatus.NoCamera);
+                        _camera.Close();
+                        _loggedFrame = false;
+                        await SafeDelay(3000, ct);
+                        _consecutiveBlackFrames = 0;
+                        continue;
+                    }
+                    await SafeDelay(200, ct);
+                    continue;
+                }
+                _consecutiveBlackFrames = 0;
+
                 if (!_loggedFrame)
                 {
                     LoggerService.LogInfo($"摄像头就绪，帧尺寸={frame.Width}x{frame.Height}，人脸模型就绪={_faceEngine?.IsFaceReady}");
@@ -457,23 +479,11 @@ public class PeekShieldEngine
         bool periodic = (DateTime.Now - _lastStatusLog).TotalSeconds > 1.5;
         if (periodic || changed)
         {
-            LoggerService.LogInfo($"帧诊断 人脸={stableCount} 原始检测={_faceEngine?.LastRawFaceCount ?? -1} 灰度均值={_faceEngine?.LastFrameMean ?? -1:F1} 标准差={_faceEngine?.LastFrameStd ?? -1:F1} 机主={stableOwner} 陌生人注视={stableStranger} 最近距离={dist:F3} 阈值={thr:F3} 离散度={_verifier?.SelfGap ?? -1:F3}");
             _lastStatusLog = DateTime.Now;
             _lastLoggedFaceCount = stableCount;
             _lastLoggedOwnerPresent = stableOwner;
         }
 
-        if (stableCount == 0 && _debugSavedCount < 3 && (DateTime.Now - _lastDebugSave).TotalSeconds > 8)
-        {
-            try
-            {
-                LoggerService.SaveDebugFrame(frame, _settings);
-                _lastDebugSave = DateTime.Now;
-                _debugSavedCount++;
-                LoggerService.LogInfo($"已保存调试帧 logs/debug_frame.jpg（灰度均值={_faceEngine?.LastFrameMean ?? -1:F1} 标准差={_faceEngine?.LastFrameStd ?? -1:F1}），便于排查检测失败");
-            }
-            catch { }
-        }
     }
 
     private void PushHistory(int count, bool owner, bool stranger)
@@ -652,7 +662,7 @@ public class PeekShieldEngine
         var seen = new List<float[]>();
         try
         {
-            using var cam = new CameraService();
+            var cam = _camera;
             if (!cam.Open(_settings.CameraIndex))
             {
                 _cameraError = cam.LastError ?? "摄像头打开失败";
@@ -829,7 +839,7 @@ public class PeekShieldEngine
         var seen = new List<float[]>();
         try
         {
-            using var cam = new CameraService();
+            var cam = _camera;
             if (!cam.Open(_settings.CameraIndex))
             {
                 _cameraError = cam.LastError ?? "摄像头打开失败";
@@ -970,7 +980,7 @@ public class PeekShieldEngine
         bool ok = false;
         try
         {
-            using var cam = new CameraService();
+            var cam = _camera;
             if (!cam.Open(_settings.CameraIndex))
             {
                 status?.Invoke("摄像头打开失败，请使用密码");
@@ -1024,7 +1034,7 @@ public class PeekShieldEngine
         bool ok = false;
         try
         {
-            using var cam = new CameraService();
+            var cam = _camera;
             if (!cam.Open(_settings.CameraIndex))
             {
                 status?.Invoke("摄像头打开失败，请使用密码");

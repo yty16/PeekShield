@@ -34,7 +34,7 @@ public partial class MainWindow : Window
     private TextBlock? _enrollHint;
     private TextBlock? _faceHint;
     private TextBlock? _quickHint;
-    private TextBlock? _camTestText;
+    private TextBlock? _guardHint;
     private ComboBox? _camComboBox;
     private ComboBox? _sensComboBox;
     private ComboBox? _themeComboBox;
@@ -373,23 +373,7 @@ public partial class MainWindow : Window
             }
         };
         row.Children.Add(_camComboBox);
-
-        var testBtn = MakeButton("测试打开", (_) =>
-        {
-            try
-            {
-                using var cam = new CameraService();
-                bool ok = cam.Open(S.CameraIndex);
-                _camTestText!.Text = ok ? $"✓ 摄像头可用：{S.CameraIndex}" : $"✗ {cam.LastError}";
-                cam.Close();
-            }
-            catch (Exception ex) { _camTestText!.Text = $"✗ 测试异常：{ex.Message}"; }
-        });
-        row.Children.Add(testBtn);
         body.Children.Add(row);
-
-        _camTestText = new TextBlock { FontSize = 12, Foreground = Palette.TextMuted, Margin = new Thickness(0, 4, 0, 0) };
-        body.Children.Add(_camTestText);
     }
 
     private void BuildSensitivitySection()
@@ -753,6 +737,36 @@ public partial class MainWindow : Window
             FontSize = 12, Foreground = Palette.TextMuted, Margin = new Thickness(0, 2, 0, 0),
             Text = "陌生人提醒记录仅在内存中临时保存，退出程序或重新录入机主人脸后会自动清空，不会写入磁盘。"
         });
+
+        body.Children.Add(new Border { Height = 1, Background = Palette.Border, Margin = new Thickness(0, 12, 0, 8) });
+        body.Children.Add(new TextBlock
+        {
+            Text = "崩溃后处理方式",
+            FontSize = 13, FontWeight = FontWeight.SemiBold, Foreground = Palette.TextPrimary,
+            Margin = new Thickness(0, 6, 0, 4)
+        });
+        body.Children.Add(new TextBlock
+        {
+            Text = "仅处理软件自身原因造成的崩溃：提示崩溃（弹出提示，可选重启应用或关闭应用）/ 静默重启应用 / 自动退出应用。强制结束进程仍由进程保护看门狗处理，两者互不影响。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var crashCombo = new ComboBox { Width = 360, Margin = new Thickness(0, 4, 0, 0) };
+        crashCombo.Items.Add("提示崩溃（重启应用 / 关闭应用）");
+        crashCombo.Items.Add("静默重启应用");
+        crashCombo.Items.Add("自动退出应用");
+        var map = new[] { CrashBehavior.PromptRestart, CrashBehavior.SilentRestart, CrashBehavior.ExitApp };
+        int sel = Array.IndexOf(map, S.CrashBehaviorOnCrash);
+        crashCombo.SelectedIndex = sel < 0 ? 0 : sel;
+        crashCombo.SelectionChanged += (_, _) =>
+        {
+            if (crashCombo.SelectedIndex is < 0 or > 2) return;
+            S.CrashBehaviorOnCrash = map[crashCombo.SelectedIndex];
+            S.Save();
+        };
+        body.Children.Add(crashCombo);
+
     }
 
     private void BuildGlobalSection()
@@ -1290,9 +1304,16 @@ public partial class MainWindow : Window
         }
         if (r == PasswordWindow.Outcome.Ok)
         {
-            UnlockMainView();
-            Build();
-            RefreshStatus();
+            try
+            {
+                UnlockMainView();
+                Build();
+                RefreshStatus();
+            }
+            catch (Exception ex)
+            {
+                try { LoggerService.LogInfo("解锁后重建主界面异常（已拦截，避免崩溃循环）：" + ex); } catch { }
+            }
         }
     }
 
@@ -1375,6 +1396,7 @@ public partial class MainWindow : Window
 
         BuildFaceUnlockSection(_securityBody);
         BuildQuickVerifySection(_securityBody);
+        BuildProcessGuardSection(_securityBody);
 
         _securityBody.Children.Add(MakeButton("修改密码", (_) => OpenSetPassword("修改密码")));
         _securityBody.Children.Add(MakeButton("关闭密码保护", (_) => DisablePasswordProtection()));
@@ -1413,7 +1435,9 @@ public partial class MainWindow : Window
             S.SecurityQuestion = "";
             S.SecurityAnswerHash = "";
             S.ProtectExit = S.ProtectUninstall = S.ProtectOpenMain = S.ProtectOpenSecurity = false;
+            S.ProcessGuardEnabled = false;
             S.Save();
+            GuardianService.Stop();
             _engine.ClearUnlock();
             _securityUnlocked = false;
             SecurityService.ResetSession();
@@ -1508,6 +1532,67 @@ public partial class MainWindow : Window
             IsVisible = false, Margin = new Thickness(0, 6, 0, 0)
         };
         body.Children.Add(_quickHint);
+    }
+
+    private void BuildProcessGuardSection(StackPanel body)
+    {
+        var sep = new Border
+        {
+            Height = 1,
+            Background = Palette.Border,
+            Margin = new Thickness(0, 10, 0, 8)
+        };
+        body.Children.Add(sep);
+        body.Children.Add(new TextBlock
+        {
+            Text = "进程保护（被杀自动重启，可选）",
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Palette.TextPrimary,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        body.Children.Add(new TextBlock
+        {
+            Text = "开启后，若软件进程被强制结束（如任务管理器结束任务），守护进程将立即强制重启并锁屏，防止他人通过关闭软件绕过防窥保护。本保护只针对外部强制结束，不处理软件自身崩溃（软件崩溃由「高级选项」中的崩溃后处理方式接管）。需先设置密码。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var cb = MakeCheck("启用进程保护（被杀自动重启）", S.ProcessGuardEnabled, v => DoToggleProcessGuard(v));
+        body.Children.Add(cb);
+
+        _guardHint = new TextBlock
+        {
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            IsVisible = false, Margin = new Thickness(0, 6, 0, 0)
+        };
+        body.Children.Add(_guardHint);
+    }
+
+    private void DoToggleProcessGuard(bool on)
+    {
+        if (!on)
+        {
+            S.ProcessGuardEnabled = false;
+            S.Save();
+            GuardianService.Stop();
+            if (_guardHint != null) { _guardHint.Text = "已关闭进程保护。"; _guardHint.IsVisible = true; }
+            RenderSecurityContent();
+            return;
+        }
+        if (!S.PasswordEnabled)
+        {
+            S.ProcessGuardEnabled = false;
+            S.Save();
+            if (_guardHint != null) { _guardHint.Text = "需先设置密码后才能启用进程保护。"; _guardHint.IsVisible = true; }
+            RenderSecurityContent();
+            return;
+        }
+        S.ProcessGuardEnabled = true;
+        S.Save();
+        GuardianService.Sync();
+        if (_guardHint != null) { _guardHint.Text = "✓ 已启用进程保护，进程被强制结束将自动重启。"; _guardHint.IsVisible = true; }
+        RenderSecurityContent();
     }
 
     private void DoToggleQuickVerify(bool on)

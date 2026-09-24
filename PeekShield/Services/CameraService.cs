@@ -31,13 +31,19 @@ public class CameraService : System.IDisposable
         {
             try
             {
-                if (_cap == null)
-                    _cap = new VideoCapture();
-                try { _cap.Release(); } catch { }
+                // 每次都使用全新 VideoCapture，并彻底丢弃上一轮对象：
+                // 避免复用失败/损坏的 capture 并对其调用 Release 触发 videoio 原生 AV（进程直接崩溃）
+                if (_cap != null)
+                {
+                    try { if (_cap.IsOpened()) _cap.Release(); } catch { }
+                    _cap = null;
+                }
+                _cap = new VideoCapture();
                 Index = index;
                 if (!_cap.Open(index, Api))
                 {
                     LastError = "无法打开摄像头（索引 " + index + "）";
+                    _cap = null;
                     return false;
                 }
                 LastError = null;
@@ -46,6 +52,7 @@ public class CameraService : System.IDisposable
             catch (Exception ex)
             {
                 LastError = ex.Message;
+                _cap = null;
                 return false;
             }
         }
@@ -87,63 +94,52 @@ public class CameraService : System.IDisposable
         }
     }
 
+    private static List<(int index, string name)>? _cachedDevices;
+    private static readonly object _enumLock = new();
+
     public static List<(int index, string name)> Enumerate()
+    {
+        lock (_enumLock)
+        {
+            if (_cachedDevices != null) return _cachedDevices;
+            _cachedDevices = EnumerateCore();
+            return _cachedDevices;
+        }
+    }
+
+    public static void RefreshCameraList()
+    {
+        lock (_enumLock)
+        {
+            _cachedDevices = EnumerateCore();
+        }
+    }
+
+    private static List<(int index, string name)> EnumerateCore()
     {
         var list = new List<(int index, string name)>();
 #if WINDOWS
         try
         {
+            // 仅读取设备名，绝不打开硬件：监控循环已持有 index 0 的摄像头（DSHOW 同进程唯一句柄），
+            // 若此处再 Open 会阻塞 UI 线程（卡死）并触发 videoio 原生 AV（进程崩溃）。DsDevice 枚举不需打开设备。
             var devices = DsDevice.GetDevicesOfCat(FilterCategory.VideoInputDevice);
-            VideoCapture? probe = null;
-            try
+            for (int i = 0; i < devices.Length; i++)
             {
-                probe = new VideoCapture();
-                for (int i = 0; i < devices.Length; i++)
-                {
-                    bool opened = false;
-                    try { probe.Release(); opened = probe.Open(i, Api); }
-                    catch { opened = false; }
-                    if (opened)
-                    {
-                        var friendly = devices[i]?.Name;
-                        list.Add((i, string.IsNullOrWhiteSpace(friendly) ? $"摄像头 {i}" : friendly!.Trim()));
-                    }
-                }
+                var friendly = devices[i]?.Name;
+                list.Add((i, string.IsNullOrWhiteSpace(friendly) ? $"摄像头 {i}" : friendly!.Trim()));
             }
-            finally
+            if (list.Count > 0)
             {
-                if (probe != null)
-                {
-                    try { probe.Release(); } catch { }
-                    try { GC.SuppressFinalize(probe); } catch { }
-                }
+                return list;
             }
-            if (list.Count > 0) return list;
         }
-        catch { }
+        catch (Exception ex)
+        {
+        }
 #endif
 
-        VideoCapture? probe2 = null;
-        try
-        {
-            probe2 = new VideoCapture();
-            for (int i = 0; i < 8; i++)
-            {
-                bool opened = false;
-                try { probe2.Release(); opened = probe2.Open(i, Api); }
-                catch { opened = false; }
-                if (opened) list.Add((i, $"摄像头 {i}"));
-            }
-        }
-        catch { }
-        finally
-        {
-            if (probe2 != null)
-            {
-                try { probe2.Release(); } catch { }
-                try { GC.SuppressFinalize(probe2); } catch { }
-            }
-        }
+        if (list.Count == 0) list.Add((0, "默认摄像头 (0)"));
         return list;
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Avalonia;
 using PeekShield.Services;
@@ -13,8 +14,23 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        GuardianService.Init(Process.GetCurrentProcess().MainModule?.FileName ?? "");
+
+        if (args.Contains("--guard"))
+        {
+            GuardianService.RunGuard();
+            return;
+        }
+
         IsUninstallVerify = args.Contains("--uninstall-verify");
         IsSecondaryInstance = IsUninstallVerify ? false : !SingleInstanceService.TryAcquire();
+
+        bool guardianLaunch = args.Contains("--guardian-launch");
+        if (IsSecondaryInstance && guardianLaunch)
+        {
+            try { LoggerService.LogInfo("守护进程拉起的新实例检测到主实例仍存活，静默退出"); } catch { }
+            return;
+        }
 
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
