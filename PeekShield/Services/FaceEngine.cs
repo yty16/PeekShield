@@ -14,6 +14,8 @@ public class FaceInfo
     public double EyeAngleDeg;
     public bool LookingAtScreen;
     public float[] Embedding = Array.Empty<float>();
+    public bool IsWhitelisted;
+    public string WhitelistName = "";
 }
 
 public class FaceEngine : IDisposable

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -78,6 +79,10 @@ public class PeekShieldSettings
     {
         new ProtectedEntry { Name = "桌面", Enabled = true }
     };
+
+    public bool WhitelistEnabled { get; set; } = false;
+
+    public List<WhitelistEntry> Whitelist { get; set; } = new();
 
     public bool OnlyProtectForeground { get; set; } = true;
 
@@ -219,6 +224,11 @@ public class PeekShieldSettings
             if (ProcessGuardEnabled && !PasswordEnabled) ProcessGuardEnabled = false;
             changed = true;
         }
+        if (SettingsVersion < 7)
+        {
+            SettingsVersion = 7;
+            changed = true;
+        }
         if (changed) Save();
     }
 
@@ -300,6 +310,13 @@ public class PeekShieldSettings
 
 public class ProtectedEntry
 {
+    public string Name { get; set; } = "";
+    public bool Enabled { get; set; } = true;
+}
+
+public class WhitelistEntry
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; } = "";
     public bool Enabled { get; set; } = true;
 }

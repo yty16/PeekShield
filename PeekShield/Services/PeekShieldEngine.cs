@@ -24,6 +24,7 @@ public class PeekShieldEngine
     private volatile FaceRecognizer? _recognizer;
     private FaceVerifier? _verifier;
     private FaceVerifier? _unlockVerifier;
+    private WhitelistService? _whitelist;
     private volatile FaceEngine? _faceEngine;
     private Task<bool>? _faceEngineTask;
     private readonly object _faceLock = new();
@@ -98,6 +99,9 @@ public class PeekShieldEngine
         _unlockVerifier.Load(UnlockDir);
         if (_unlockVerifier.IsEnrolled && !_settings.FaceUnlockEnabled) { _settings.FaceUnlockEnabled = true; _settings.Save(); }
         if (!_unlockVerifier.IsEnrolled && _settings.FaceUnlockEnabled) { _settings.FaceUnlockEnabled = false; _settings.Save(); }
+
+        _whitelist = new WhitelistService(_settings);
+        _whitelist.Reload();
 
         _fg.Start();
 
@@ -286,6 +290,16 @@ public class PeekShieldEngine
                 }
 
                 List<FaceInfo> faces = _faceEngine!.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter);
+                if (_settings.WhitelistEnabled && _whitelist != null)
+                {
+                    double wth = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
+                    foreach (var f in faces)
+                    {
+                        if (f.IsOwner || f.Embedding.Length != FaceVerifier.Dim) continue;
+                        var nm = _whitelist.Match(f.Embedding, wth);
+                        if (nm != null) { f.IsWhitelisted = true; f.WhitelistName = nm; }
+                    }
+                }
                 _fg.RefreshForeground();
                 Evaluate(faces, frame);
 
@@ -449,7 +463,7 @@ public class PeekShieldEngine
     {
         int count = faces.Count;
         bool owner = faces.Any(f => f.IsOwner);
-        bool strangerLooking = faces.Any(f => !f.IsOwner && f.LookingAtScreen);
+        bool strangerLooking = faces.Any(f => !f.IsOwner && !f.IsWhitelisted && f.LookingAtScreen);
 
         PushHistory(count, owner, strangerLooking);
         int stableCount = StableFaceCount();
@@ -459,7 +473,7 @@ public class PeekShieldEngine
         _faceCount = stableCount;
         _ownerPresent = stableOwner;
 
-        var strangerFaces = faces.Where(f => !f.IsOwner && f.LookingAtScreen && f.Embedding.Length == FaceVerifier.Dim).ToList();
+        var strangerFaces = faces.Where(f => !f.IsOwner && !f.IsWhitelisted && f.LookingAtScreen && f.Embedding.Length == FaceVerifier.Dim).ToList();
         bool hasAlertableStranger = stableCount >= 1 && stableStranger && HasAlertableStranger(strangerFaces);
 
         if (hasAlertableStranger && !_peekActive) StartPeek(frame, strangerFaces);
@@ -1081,6 +1095,160 @@ public class PeekShieldEngine
         catch { }
         _settings.FaceUnlockEnabled = false;
         _settings.Save();
+    }
+
+    public string AddWhitelist(string name)
+    {
+        var e = new WhitelistEntry { Id = Guid.NewGuid().ToString(), Name = name, Enabled = true };
+        _settings.Whitelist.Add(e);
+        _settings.Save();
+        _whitelist?.AddItem(e);
+        return e.Id;
+    }
+
+    public void RemoveWhitelist(string id)
+    {
+        _whitelist?.RemoveItem(id);
+    }
+
+    public void RenameWhitelist(string id, string name)
+    {
+        _whitelist?.Rename(id, name);
+    }
+
+    public int WhitelistSampleCount(string id)
+    {
+        return _whitelist?.GetItem(id)?.Verifier.SampleCount ?? 0;
+    }
+
+    public async Task<bool> EnrollWhitelistAsync(string id, int samples = 12, Action<int>? progress = null)
+    {
+        if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
+        if (!_settings.WhitelistEnabled) return false;
+        var item = _whitelist?.GetItem(id);
+        if (item == null) return false;
+        StopLoop();
+        if (!await EnsureFaceEngineAsync())
+        {
+            _cameraError = "人脸识别模型加载失败，无法录入白名单人脸";
+            LoggerService.LogInfo("白名单录入前模型按需加载失败");
+            return false;
+        }
+        item.Verifier.Clear();
+        bool ok = false;
+        var seen = new List<float[]>();
+        try
+        {
+            var cam = _camera;
+            if (!cam.Open(_settings.CameraIndex))
+            {
+                _cameraError = cam.LastError ?? "摄像头打开失败";
+                return false;
+            }
+            using var frame = new Mat();
+            int collected = 0;
+            int attempts = 0;
+            for (int i = 0; i < samples + 30 && collected < samples; i++)
+            {
+                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(frame);
+                if (faces.Count == 0) { await SafeDelay(200, default); continue; }
+                attempts++;
+                var emb = faces[0].Embedding;
+                bool dup = seen.Any(s => EmbDist(emb, s) < 0.25);
+                if (!dup)
+                {
+                    seen.Add(emb);
+                    if (item.Verifier.AddSample(emb)) { collected++; progress?.Invoke(collected); }
+                }
+                await SafeDelay(300, default);
+            }
+            cam.Close();
+            ok = collected >= 3;
+            if (ok)
+            {
+                _whitelist!.Persist(id);
+                LoggerService.LogInfo($"白名单录入成功：名称={item.Entry.Name} 接受={collected} 离散度={item.Verifier.SelfGap:F3}");
+            }
+            else
+            {
+                item.Verifier.Clear();
+                _whitelist!.DeleteData(id);
+                LoggerService.LogInfo($"白名单录入失败：名称={item.Entry.Name} 接受={collected}（需至少 3 张合格样本）");
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("白名单录入过程异常：" + ex);
+            item.Verifier.Clear();
+            _whitelist?.DeleteData(id);
+            ok = false;
+        }
+        finally
+        {
+            _settings.Save();
+            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+        }
+        return ok;
+    }
+
+    public async Task<bool> EnrollWhitelistFromPhotoAsync(string id, string imagePath, Action<int>? progress = null)
+    {
+        if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
+        if (!_settings.WhitelistEnabled) return false;
+        var item = _whitelist?.GetItem(id);
+        if (item == null) return false;
+        StopLoop();
+        if (!await EnsureFaceEngineAsync())
+        {
+            _cameraError = "人脸识别模型加载失败，无法录入白名单人脸";
+            LoggerService.LogInfo("白名单照片录入前模型按需加载失败");
+            return false;
+        }
+        item.Verifier.Clear();
+        bool ok = false;
+        try
+        {
+            if (!File.Exists(imagePath)) { return false; }
+            using var img = Cv2.ImRead(imagePath, ImreadModes.Color);
+            if (img.Empty()) { return false; }
+            int collected = 0;
+            var faces = _recognizer!.Detect(img);
+            if (faces.Count == 0)
+            {
+                LoggerService.LogInfo("白名单照片录入失败：未在照片中检测到人脸，请换一张正脸清晰照片");
+                return false;
+            }
+            if (item.Verifier.AddSample(faces[0].Embedding)) collected++;
+            using var flip = new Mat(); Cv2.Flip(img, flip, FlipMode.Y);
+            var f2 = _recognizer.Detect(flip);
+            if (f2.Count > 0 && item.Verifier.AddSample(f2[0].Embedding)) collected++;
+            ok = collected >= 1;
+            if (ok)
+            {
+                _whitelist!.Persist(id);
+                LoggerService.LogInfo($"白名单照片录入成功：名称={item.Entry.Name} 接受={collected} 离散度={item.Verifier.SelfGap:F3}");
+            }
+            else
+            {
+                item.Verifier.Clear();
+                _whitelist!.DeleteData(id);
+                LoggerService.LogInfo($"白名单照片录入失败：名称={item.Entry.Name} 接受={collected}（请换一张正脸清晰照片）");
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("白名单照片录入过程异常：" + ex);
+            item.Verifier.Clear();
+            _whitelist?.DeleteData(id);
+            ok = false;
+        }
+        finally
+        {
+            _settings.Save();
+            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+        }
+        return ok;
     }
 
     private void ResetHistory()

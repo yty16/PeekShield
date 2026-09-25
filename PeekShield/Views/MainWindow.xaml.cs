@@ -30,6 +30,13 @@ public partial class MainWindow : Window
     private readonly List<ProtectedEntry> _procList = new();
     private readonly List<ProtectedEntry> _titleList = new();
 
+    private StackPanel? _wlHost;
+    private TextBox? _wlInput;
+    private TextBlock? _wlHint;
+    private CheckBox? _wlEnabledCheck;
+    private Button? _wlAddBtn;
+    private bool _wlBusy;
+
     private TextBlock? _statusText;
     private TextBlock? _enrollHint;
     private TextBlock? _faceHint;
@@ -198,6 +205,9 @@ public partial class MainWindow : Window
 
         BuildAppearanceSection();
         BuildEnrollSection();
+#if PEEKSHIELD_WHITELIST
+        BuildWhitelistSection();
+#endif
         BuildCameraSection();
         BuildSensitivitySection();
         BuildActionsSection();
@@ -1682,5 +1692,171 @@ public partial class MainWindow : Window
             RefreshStatus();
         };
         cd.ShowDialog(this);
+    }
+
+    private void BuildWhitelistSection()
+    {
+        var body = AddCard("白名单人脸（可信但不触发防窥）");
+        body.Children.Add(new TextBlock
+        {
+            FontSize = 12,
+            Foreground = Palette.TextMuted,
+            TextWrapping = TextWrapping.Wrap,
+            Text = "把信任的人（如家人）加入白名单并录入其人脸后，这些人注视屏幕时不会触发雾化 / 弹窗 / 告警；陌生人仍会触发防护。需先录入机主人脸并开启智能防窥。"
+        });
+
+        _wlEnabledCheck = MakeCheck("启用白名单（关闭后所有人脸都按陌生人处理）", S.WhitelistEnabled, v =>
+        {
+            S.WhitelistEnabled = v; S.Save();
+            if (_wlAddBtn != null) _wlAddBtn.IsEnabled = v;
+            if (_wlHost != null) _wlHost.IsEnabled = v;
+        });
+        body.Children.Add(_wlEnabledCheck);
+
+        _wlHost = new StackPanel { Spacing = 4, Margin = new Thickness(0, 6, 0, 2), IsEnabled = S.WhitelistEnabled };
+        body.Children.Add(_wlHost);
+        RebuildWhitelistList();
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        _wlInput = new TextBox { Width = 220, Watermark = "白名单姓名（如 家人A）" };
+        _wlAddBtn = MakeButton("添加白名单", (_) =>
+        {
+            var t = (_wlInput!.Text ?? string.Empty).Trim();
+            if (t.Length == 0) return;
+            if (S.Whitelist.Any(x => string.Equals(x.Name, t, StringComparison.OrdinalIgnoreCase))) return;
+            var id = _engine.AddWhitelist(t);
+            S.Save();
+            RebuildWhitelistList();
+            _wlInput.Text = "";
+        });
+        _wlAddBtn.IsEnabled = S.WhitelistEnabled;
+        row.Children.Add(_wlInput);
+        row.Children.Add(_wlAddBtn);
+        body.Children.Add(row);
+
+        _wlHint = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = Palette.TextMuted,
+            TextWrapping = TextWrapping.Wrap,
+            IsVisible = false,
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+        body.Children.Add(_wlHint);
+    }
+
+    private void RebuildWhitelistList()
+    {
+        if (_wlHost == null) return;
+        _wlHost.Children.Clear();
+        if (S.Whitelist.Count == 0)
+        {
+            _wlHost.Children.Add(new TextBlock
+            {
+                Text = "（暂无白名单，添加姓名并录入人脸后即可生效）",
+                FontSize = 12,
+                Foreground = Palette.TextFaint,
+                Margin = new Thickness(2, 2, 0, 2)
+            });
+            return;
+        }
+        foreach (var e in S.Whitelist)
+            _wlHost.Children.Add(MakeWhitelistRow(e));
+    }
+
+    private StackPanel MakeWhitelistRow(WhitelistEntry entry)
+    {
+        var card = new StackPanel { Spacing = 3, Margin = new Thickness(0, 3, 0, 3) };
+
+        var row1 = new Grid { Margin = new Thickness(0, 1, 0, 1) };
+        row1.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row1.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row1.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var cb = new CheckBox { IsChecked = entry.Enabled, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+        cb.IsCheckedChanged += (_, _) => { entry.Enabled = cb.IsChecked == true; S.Save(); };
+        Grid.SetColumn(cb, 0);
+
+        var nameBox = new TextBox { Text = entry.Name, VerticalAlignment = VerticalAlignment.Center, Watermark = "白名单姓名" };
+        nameBox.TextChanged += (_, _) => _engine.RenameWhitelist(entry.Id, nameBox.Text.Trim());
+        Grid.SetColumn(nameBox, 1);
+
+        var del = MakeButton("删除", (_) =>
+        {
+            var cd = new ConfirmDialog("删除白名单", $"确定删除「{entry.Name}」？其人脸数据将从本地删除。", "删除", "取消");
+            cd.Closed += (_, _) =>
+            {
+                if (!cd.Confirmed) return;
+                _engine.RemoveWhitelist(entry.Id);
+                RebuildWhitelistList();
+            };
+            cd.ShowDialog(this);
+        });
+        Grid.SetColumn(del, 2);
+
+        row1.Children.Add(cb);
+        row1.Children.Add(nameBox);
+        row1.Children.Add(del);
+
+        var row2 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 2, 0, 0) };
+        row2.Children.Add(MakeButton("录入人脸", async (_) => await DoEnrollWhitelist(entry.Id)));
+        row2.Children.Add(MakeButton("上传照片", async (_) => await DoEnrollWhitelistPhoto(entry.Id)));
+        int n = _engine.WhitelistSampleCount(entry.Id);
+        row2.Children.Add(new TextBlock
+        {
+            Text = n > 0 ? $"已录入 {n} 张样本" : "未录入人脸",
+            FontSize = 12,
+            Foreground = Palette.TextMuted,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        card.Children.Add(row1);
+        card.Children.Add(row2);
+        return card;
+    }
+
+    private async Task DoEnrollWhitelist(string id)
+    {
+        if (_wlBusy) return;
+        _wlBusy = true;
+        if (_wlAddBtn != null) _wlAddBtn.IsEnabled = false;
+        UpdateWhitelistHint("录入中… 请正对摄像头保持静止（约 3 秒）");
+        bool ok = await _engine.EnrollWhitelistAsync(id, 12, (n) => UpdateWhitelistHint($"已采集 {n} 张人脸样本…"));
+        UpdateWhitelistHint(ok ? "✓ 白名单录入成功" : "✗ 录入失败：未采集到足够清晰的人脸，请重试");
+        RebuildWhitelistList();
+        if (_wlAddBtn != null) _wlAddBtn.IsEnabled = S.WhitelistEnabled;
+        _wlBusy = false;
+    }
+
+    private async Task DoEnrollWhitelistPhoto(string id)
+    {
+        if (_wlBusy) return;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择包含该白名单人员正脸的照片",
+            AllowMultiple = false,
+            FileTypeFilter = new[] { new FilePickerFileType("图片") { Patterns = new[] { "*.jpg", "*.jpeg", "*.png", "*.bmp" } } }
+        });
+        if (files == null || files.Count == 0) return;
+        var path = files[0].Path.LocalPath;
+        _wlBusy = true;
+        if (_wlAddBtn != null) _wlAddBtn.IsEnabled = false;
+        UpdateWhitelistHint("照片录入中… 正在本地分析人脸特征");
+        bool ok = await _engine.EnrollWhitelistFromPhotoAsync(id, path, (n) => UpdateWhitelistHint($"已生成 {n} 个人脸特征样本…"));
+        UpdateWhitelistHint(ok ? "✓ 白名单照片录入成功" : "✗ 未从照片中检测到清晰正脸，请换一张重新上传");
+        RebuildWhitelistList();
+        if (_wlAddBtn != null) _wlAddBtn.IsEnabled = S.WhitelistEnabled;
+        _wlBusy = false;
+    }
+
+    private void UpdateWhitelistHint(string? text = null)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_wlHint == null) return;
+            if (string.IsNullOrEmpty(text)) { _wlHint.IsVisible = false; return; }
+            _wlHint.IsVisible = true;
+            _wlHint.Text = text;
+        });
     }
 }
