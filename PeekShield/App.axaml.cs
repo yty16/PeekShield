@@ -275,7 +275,7 @@ public partial class App : Application
             var w = MainWindow.Instance;
             if (w != null && w.IsVisible)
             {
-                var dlg = new PasswordWindow("验证以退出", "退出应用前需验证密码。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash, PeekShieldEngine.Instance, s.PasswordEnabled && s.FaceUnlockEnabled, PeekShieldEngine.Instance.QuickVerifyAvailable);
+                var dlg = PasswordWindow.Create("Exit", "验证以退出", "退出应用前需验证密码。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash, PeekShieldEngine.Instance, s, PeekShieldEngine.Instance.QuickVerifyAvailable);
                 dlg.Closed += (_, _) =>
                 {
                     if (dlg.Result == PeekShield.Views.PasswordWindow.Outcome.Ok ||
@@ -417,10 +417,11 @@ public partial class App : Application
         }
 
         try { ThemeService.Init(settings.ThemeMode); } catch { }
+        try { ApplyTheme(); } catch { }
 
-        var w = new PasswordWindow("卸载验证",
+        var w = PasswordWindow.Create("Uninstall", "卸载验证",
             "为保障你的隐私，卸载本软件前需验证密码。若已设置保密问题，可通过回答保密问题来验证。",
-            settings.PasswordHash, settings.SecurityQuestion, settings.SecurityAnswerHash, PeekShieldEngine.Instance, settings.PasswordEnabled && settings.FaceUnlockEnabled, PeekShieldEngine.Instance.QuickVerifyAvailable);
+            settings.PasswordHash, settings.SecurityQuestion, settings.SecurityAnswerHash, PeekShieldEngine.Instance, settings, PeekShieldEngine.Instance.QuickVerifyAvailable);
         w.Closed += (_, _) =>
         {
             int code = (w.Result == PeekShield.Views.PasswordWindow.Outcome.Ok ||

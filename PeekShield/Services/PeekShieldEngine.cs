@@ -23,7 +23,7 @@ public class PeekShieldEngine
     private PeekShieldSettings _settings = new();
     private volatile FaceRecognizer? _recognizer;
     private FaceVerifier? _verifier;
-    private FaceVerifier? _unlockVerifier;
+    private readonly Dictionary<string, FaceVerifier> _faceAuthVerifiers = new();
     private WhitelistService? _whitelist;
     private volatile FaceEngine? _faceEngine;
     private Task<bool>? _faceEngineTask;
@@ -80,13 +80,25 @@ public class PeekShieldEngine
     public bool IsPeekActive => _peekActive;
     public string CameraError => _cameraError;
     public bool IsEnrolled => _verifier?.IsEnrolled ?? false;
-    public bool IsFaceUnlockEnrolled => _unlockVerifier?.IsEnrolled ?? false;
+    public bool IsFaceUnlockEnrolled => IsEnrolled || _faceAuthVerifiers.Values.Any(v => v.IsEnrolled);
+    public bool IsFaceAuthEnrolled(string id)
+    {
+        var entry = _settings.AuthMethods.FirstOrDefault(m => m.Id == id);
+        if (entry?.Kind == AuthMethodKind.QuickFace) return IsEnrolled;
+        return _faceAuthVerifiers.TryGetValue(id, out var v) && v.IsEnrolled;
+    }
+    public int FaceAuthSampleCount(string id)
+    {
+        var entry = _settings.AuthMethods.FirstOrDefault(m => m.Id == id);
+        if (entry?.Kind == AuthMethodKind.QuickFace) return _verifier?.SampleCount ?? 0;
+        return _faceAuthVerifiers.TryGetValue(id, out var v) ? v.SampleCount : 0;
+    }
 
     public double LastMatchDistance => _verifier?.LastDistance ?? -1;
     public double LastMatchThreshold => _verifier?.LastThreshold ?? -1;
 
     private static string EnrollDir => Platform.EnrollDir;
-    private static string UnlockDir => Path.Combine(EnrollDir, "unlock");
+    private static string FaceAuthDir(string id) => Path.Combine(EnrollDir, "faces", id);
 
     public void Initialize()
     {
@@ -95,10 +107,8 @@ public class PeekShieldEngine
         _verifier = new FaceVerifier();
         _verifier.Load(EnrollDir);
 
-        _unlockVerifier = new FaceVerifier();
-        _unlockVerifier.Load(UnlockDir);
-        if (_unlockVerifier.IsEnrolled && !_settings.FaceUnlockEnabled) { _settings.FaceUnlockEnabled = true; _settings.Save(); }
-        if (!_unlockVerifier.IsEnrolled && _settings.FaceUnlockEnabled) { _settings.FaceUnlockEnabled = false; _settings.Save(); }
+        ReloadFaceAuthVerifiers();
+        _settings.FaceUnlockEnabled = IsFaceUnlockEnrolled;
 
         _whitelist = new WhitelistService(_settings);
         _whitelist.Reload();
@@ -134,6 +144,22 @@ public class PeekShieldEngine
 
         if (_settings.EnableSmartPeek && !_settings.Paused && ConsentService.CanProcessFace(_settings))
             StartLoop();
+    }
+
+    public void ReloadFaceAuthVerifiers()
+    {
+        lock (_faceAuthVerifiers)
+        {
+            foreach (var v in _faceAuthVerifiers.Values) v.Dispose();
+            _faceAuthVerifiers.Clear();
+            foreach (var m in _settings.AuthMethods)
+            {
+                if (m.Kind != AuthMethodKind.Face) continue;
+                var v = new FaceVerifier();
+                v.Load(FaceAuthDir(m.Id));
+                _faceAuthVerifiers[m.Id] = v;
+            }
+        }
     }
 
     private Task<bool> EnsureFaceEngineAsync()
@@ -836,19 +862,29 @@ public class PeekShieldEngine
         PushStatus(_peekActive ? EngineStatus.Peek : EngineStatus.NotEnrolled);
     }
 
-    public async Task<bool> EnrollUnlockAsync(int samples = 10, Action<int>? progress = null)
+    public async Task<bool> EnrollFaceAuthAsync(string id, int samples = 10, Action<int>? progress = null)
     {
-        if (!_settings.PasswordEnabled) return false;
+        var entry = _settings.AuthMethods.FirstOrDefault(m => m.Id == id);
+        if (entry?.Kind == AuthMethodKind.QuickFace) return IsEnrolled;
         if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
         StopLoop();
         if (!await EnsureFaceEngineAsync())
         {
-            _cameraError = "人脸识别模型加载失败，无法录入刷脸解锁";
-            LoggerService.LogInfo("刷脸解锁录入前模型按需加载失败");
+            _cameraError = "人脸识别模型加载失败，无法录入人脸";
+            LoggerService.LogInfo("人脸认证录入前模型按需加载失败");
             return false;
         }
-        bool wasEnrolled = _unlockVerifier!.IsEnrolled;
-        _unlockVerifier.Clear();
+        FaceVerifier verifier;
+        lock (_faceAuthVerifiers)
+        {
+            if (!_faceAuthVerifiers.TryGetValue(id, out verifier))
+            {
+                verifier = new FaceVerifier();
+                _faceAuthVerifiers[id] = verifier;
+            }
+        }
+        bool wasEnrolled = verifier.IsEnrolled;
+        verifier.Clear();
         bool ok = false;
         var seen = new List<float[]>();
         try
@@ -857,7 +893,7 @@ public class PeekShieldEngine
             if (!cam.Open(_settings.CameraIndex))
             {
                 _cameraError = cam.LastError ?? "摄像头打开失败";
-                RestorePriorUnlock(wasEnrolled);
+                RestoreFaceAuth(id, wasEnrolled);
                 return false;
             }
             using var frame = new Mat();
@@ -874,7 +910,7 @@ public class PeekShieldEngine
                 if (!dup)
                 {
                     seen.Add(emb);
-                    if (_unlockVerifier.AddSample(emb)) { collected++; progress?.Invoke(collected); }
+                    if (verifier.AddSample(emb)) { collected++; progress?.Invoke(collected); }
                 }
                 await SafeDelay(300, default);
             }
@@ -882,20 +918,20 @@ public class PeekShieldEngine
             ok = collected >= 3;
             if (ok)
             {
-                _unlockVerifier.Save(UnlockDir);
-                _settings.FaceUnlockEnabled = true;
-                LoggerService.LogInfo($"刷脸解锁录入成功：尝试={attempts} 接受={collected} 离散度={_unlockVerifier.SelfGap:F3}");
+                verifier.Save(FaceAuthDir(id));
+                _settings.FaceUnlockEnabled = IsFaceUnlockEnrolled;
+                LoggerService.LogInfo($"人脸认证录入成功：条目={id} 尝试={attempts} 接受={collected} 离散度={verifier.SelfGap:F3}");
             }
             else
             {
-                RestorePriorUnlock(wasEnrolled);
-                LoggerService.LogInfo($"刷脸解锁录入失败：尝试={attempts} 接受={collected}（需至少 3 张合格样本{(wasEnrolled ? "，已恢复此前录入" : "")}）");
+                RestoreFaceAuth(id, wasEnrolled);
+                LoggerService.LogInfo($"人脸认证录入失败：条目={id} 尝试={attempts} 接受={collected}（需至少 3 张合格样本{(wasEnrolled ? "，已恢复此前录入" : "")}）");
             }
         }
         catch (Exception ex)
         {
-            LoggerService.LogInfo("刷脸解锁录入过程异常：" + ex);
-            RestorePriorUnlock(wasEnrolled);
+            LoggerService.LogInfo("人脸认证录入过程异常：" + ex);
+            RestoreFaceAuth(id, wasEnrolled);
             ok = false;
         }
         finally
@@ -906,70 +942,88 @@ public class PeekShieldEngine
         return ok;
     }
 
-    private void RestorePriorUnlock(bool wasEnrolled)
+    private void RestoreFaceAuth(string id, bool wasEnrolled)
     {
-        if (wasEnrolled)
+        if (_faceAuthVerifiers.TryGetValue(id, out var verifier))
         {
-            try { _unlockVerifier!.Load(UnlockDir); } catch { }
-            _settings.FaceUnlockEnabled = _unlockVerifier!.IsEnrolled;
+            if (wasEnrolled)
+            {
+                try { verifier.Load(FaceAuthDir(id)); } catch { }
+            }
+            else
+            {
+                verifier.Clear();
+                try
+                {
+                    var dir = FaceAuthDir(id);
+                    if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                }
+                catch { }
+            }
         }
-        else
-        {
-            _unlockVerifier!.Clear();
-            _settings.FaceUnlockEnabled = false;
-        }
+        _settings.FaceUnlockEnabled = IsFaceUnlockEnrolled;
     }
 
-    public async Task<bool> EnrollUnlockFromPhotoAsync(string imagePath, Action<int>? progress = null)
+    public async Task<bool> EnrollFaceAuthFromPhotoAsync(string id, string imagePath, Action<int>? progress = null)
     {
-        if (!_settings.PasswordEnabled) return false;
+        var entry = _settings.AuthMethods.FirstOrDefault(m => m.Id == id);
+        if (entry?.Kind == AuthMethodKind.QuickFace) return IsEnrolled;
         if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
         StopLoop();
         if (!await EnsureFaceEngineAsync())
         {
-            _cameraError = "人脸识别模型加载失败，无法录入刷脸解锁";
-            LoggerService.LogInfo("刷脸解锁照片录入前模型按需加载失败");
+            _cameraError = "人脸识别模型加载失败，无法录入人脸";
+            LoggerService.LogInfo("人脸认证照片录入前模型按需加载失败");
             return false;
         }
-        bool wasEnrolled = _unlockVerifier!.IsEnrolled;
-        _unlockVerifier.Clear();
+        FaceVerifier verifier;
+        lock (_faceAuthVerifiers)
+        {
+            if (!_faceAuthVerifiers.TryGetValue(id, out verifier))
+            {
+                verifier = new FaceVerifier();
+                _faceAuthVerifiers[id] = verifier;
+            }
+        }
+        bool wasEnrolled = verifier.IsEnrolled;
+        verifier.Clear();
         bool ok = false;
         try
         {
-            if (!File.Exists(imagePath)) { RestorePriorUnlock(wasEnrolled); return false; }
+            if (!File.Exists(imagePath)) { RestoreFaceAuth(id, wasEnrolled); return false; }
             using var img = Cv2.ImRead(imagePath, ImreadModes.Color);
-            if (img.Empty()) { RestorePriorUnlock(wasEnrolled); return false; }
+            if (img.Empty()) { RestoreFaceAuth(id, wasEnrolled); return false; }
 
             int collected = 0;
             var faces = _recognizer!.Detect(img);
             if (faces.Count == 0)
             {
-                RestorePriorUnlock(wasEnrolled);
-                LoggerService.LogInfo("刷脸解锁照片录入失败：未在照片中检测到人脸，请换一张正脸清晰照片");
+                RestoreFaceAuth(id, wasEnrolled);
+                LoggerService.LogInfo("人脸认证照片录入失败：未在照片中检测到人脸，请换一张正脸清晰照片");
                 return false;
             }
-            if (_unlockVerifier.AddSample(faces[0].Embedding)) collected++;
+            if (verifier.AddSample(faces[0].Embedding)) collected++;
             using var flip = new Mat(); Cv2.Flip(img, flip, FlipMode.Y);
             var f2 = _recognizer.Detect(flip);
-            if (f2.Count > 0 && _unlockVerifier.AddSample(f2[0].Embedding)) collected++;
+            if (f2.Count > 0 && verifier.AddSample(f2[0].Embedding)) collected++;
 
             ok = collected >= 1;
             if (ok)
             {
-                _unlockVerifier.Save(UnlockDir);
-                _settings.FaceUnlockEnabled = true;
-                LoggerService.LogInfo($"刷脸解锁照片录入成功：接受={collected} 离散度={_unlockVerifier.SelfGap:F3}");
+                verifier.Save(FaceAuthDir(id));
+                _settings.FaceUnlockEnabled = IsFaceUnlockEnrolled;
+                LoggerService.LogInfo($"人脸认证照片录入成功：条目={id} 接受={collected} 离散度={verifier.SelfGap:F3}");
             }
             else
             {
-                RestorePriorUnlock(wasEnrolled);
-                LoggerService.LogInfo($"刷脸解锁照片录入失败：接受={collected}（请换一张正脸清晰照片{(wasEnrolled ? "，已恢复此前录入" : "")})");
+                RestoreFaceAuth(id, wasEnrolled);
+                LoggerService.LogInfo($"人脸认证照片录入失败：条目={id} 接受={collected}（请换一张正脸清晰照片{(wasEnrolled ? "，已恢复此前录入" : "")})");
             }
         }
         catch (Exception ex)
         {
-            LoggerService.LogInfo("刷脸解锁照片录入过程异常：" + ex);
-            RestorePriorUnlock(wasEnrolled);
+            LoggerService.LogInfo("人脸认证照片录入过程异常：" + ex);
+            RestoreFaceAuth(id, wasEnrolled);
             ok = false;
         }
         finally
@@ -980,15 +1034,18 @@ public class PeekShieldEngine
         return ok;
     }
 
-    public async Task<bool> VerifyUnlockAsync(Action<string>? status = null)
+    public async Task<bool> VerifyFaceAuthAsync(string id, Action<string>? status = null, Action<OpenCvSharp.Mat>? onFrame = null)
     {
-        if (_unlockVerifier == null || !_unlockVerifier.IsEnrolled) return false;
+        var entry = _settings.AuthMethods.FirstOrDefault(m => m.Id == id);
+        FaceVerifier? verifier = entry?.Kind == AuthMethodKind.QuickFace ? _verifier : null;
+        if (verifier == null) _faceAuthVerifiers.TryGetValue(id, out verifier);
+        if (verifier == null || !verifier.IsEnrolled) return false;
         if (!ConsentService.CanProcessFace(_settings)) return false;
         StopLoop();
         if (!await EnsureFaceEngineAsync())
         {
             status?.Invoke("人脸识别模型加载失败，请使用密码");
-            LoggerService.LogInfo("刷脸解锁验证前模型按需加载失败");
+            LoggerService.LogInfo("人脸认证验证前模型按需加载失败");
             return false;
         }
         bool ok = false;
@@ -1007,20 +1064,21 @@ public class PeekShieldEngine
             while (sw.Elapsed < TimeSpan.FromSeconds(8) && !ok)
             {
                 if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
+                if (onFrame != null) { try { onFrame(frame.Clone()); } catch { } }
                 var faces = _recognizer!.Detect(frame);
                 if (faces.Count == 0) { await SafeDelay(200, default); continue; }
                 attempts++;
-                var (isOwner, dist) = _unlockVerifier.Verify(faces[0].Embedding, th);
+                var (isOwner, dist) = verifier.Verify(faces[0].Embedding, th);
                 status?.Invoke("人脸比对中…");
                 if (isOwner) { ok = true; break; }
                 await SafeDelay(200, default);
             }
             cam.Close();
-            LoggerService.LogInfo($"刷脸解锁验证：尝试={attempts} 结果={(ok ? "通过" : "未匹配")} 阈值={th:F3} 耗时={sw.Elapsed.TotalSeconds:F1}s");
+            LoggerService.LogInfo($"人脸认证验证：条目={id} 尝试={attempts} 结果={(ok ? "通过" : "未匹配")} 阈值={th:F3} 耗时={sw.Elapsed.TotalSeconds:F1}s");
         }
         catch (Exception ex)
         {
-            LoggerService.LogInfo("刷脸解锁验证异常：" + ex);
+            LoggerService.LogInfo("人脸认证验证异常：" + ex);
             ok = false;
         }
         finally
@@ -1031,13 +1089,16 @@ public class PeekShieldEngine
     }
 
     public bool QuickVerifyAvailable =>
-        _settings.PasswordEnabled && _settings.QuickVerifyEnabled && IsEnrolled && ConsentService.CanProcessFace(_settings);
+        _settings.PasswordEnabled &&
+        _settings.AuthMethods.Any(m => m.Kind == AuthMethodKind.QuickFace) &&
+        IsEnrolled &&
+        ConsentService.CanProcessFace(_settings);
 
     public async Task<bool> TryAutoVerifyAsync(Action<string>? status = null)
     {
-        if (_verifier == null || !_verifier.IsEnrolled) return false;
         if (!_settings.PasswordEnabled || !_settings.QuickVerifyEnabled) return false;
         if (!ConsentService.CanProcessFace(_settings)) return false;
+        if (_verifier == null || !_verifier.IsEnrolled) return false;
         StopLoop();
         if (!await EnsureFaceEngineAsync())
         {
@@ -1084,13 +1145,32 @@ public class PeekShieldEngine
         return ok;
     }
 
-    public void ClearUnlock()
+    public void ClearFaceAuth(string id)
     {
-        _unlockVerifier?.Clear();
+        var entry = _settings.AuthMethods.FirstOrDefault(m => m.Id == id);
+        if (entry?.Kind == AuthMethodKind.QuickFace) return;
+        if (_faceAuthVerifiers.TryGetValue(id, out var verifier)) verifier.Clear();
         try
         {
-            if (Directory.Exists(UnlockDir))
-                foreach (var f in Directory.GetFiles(UnlockDir)) File.Delete(f);
+            var dir = FaceAuthDir(id);
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+        catch { }
+        _settings.FaceUnlockEnabled = IsFaceUnlockEnrolled;
+        _settings.Save();
+    }
+
+    public void ClearAllFaceAuth()
+    {
+        lock (_faceAuthVerifiers)
+        {
+            foreach (var v in _faceAuthVerifiers.Values) v.Dispose();
+            _faceAuthVerifiers.Clear();
+        }
+        try
+        {
+            var dir = Path.Combine(EnrollDir, "faces");
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
         }
         catch { }
         _settings.FaceUnlockEnabled = false;
@@ -1294,6 +1374,6 @@ public class PeekShieldEngine
         _recognizer?.Dispose();
         _faceEngine?.Dispose();
         _verifier?.Dispose();
-        _unlockVerifier?.Dispose();
+        lock (_faceAuthVerifiers) { foreach (var v in _faceAuthVerifiers.Values) v.Dispose(); }
     }
 }

@@ -1,12 +1,16 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using PeekShield.Models;
 using PeekShield.Services;
 
 namespace PeekShield.Views;
@@ -21,29 +25,44 @@ public sealed class PasswordWindow : Window
     private readonly string? _question;
     private readonly string? _answerHash;
     private readonly PeekShieldEngine? _engine;
-    private readonly bool _faceUnlockAvailable;
-    private readonly bool _quickVerifyAvailable;
-    private TextBox? _pwd;
+    private readonly PeekShieldSettings _settings;
+    private readonly List<AuthMethodEntry> _methods;
+    private readonly string _operation;
+    private readonly bool _quickVerify;
+
+    private StackPanel? _methodList;
+    private Panel? _contentHost;
     private TextBlock? _hint;
-    private StackPanel? _recovery;
-    private TextBox? _ans;
-    private Button? _ok;
-    private Button? _faceBtn;
+    private TextBlock? _titleText;
+    private Button? _cancelBtn;
+    private readonly List<Button> _methodButtons = new();
+    private int _selectedIndex = 0;
     private bool _busy;
+    private AuthMethodKind _selectedKind;
+    private AuthMethodEntry? _selectedMethod;
+
+    private TextBox? _pwdBox;
+    private Image? _facePreview;
+    private TextBlock? _faceStatus;
+    private Button? _faceRetryBtn;
+    private CancellationTokenSource? _faceCts;
+
     private readonly DispatcherTimer _lockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
-    public PasswordWindow(string title, string prompt, string storedHash, string? question = null, string? answerHash = null, PeekShieldEngine? engine = null, bool faceUnlockAvailable = false, bool quickVerifyAvailable = false)
+    public PasswordWindow(string operation, string title, string prompt, string storedHash, string? question, string? answerHash, PeekShieldEngine? engine, PeekShieldSettings settings, List<AuthMethodEntry> methods, bool quickVerify)
     {
+        _operation = operation;
         _stored = storedHash;
         _question = question;
         _answerHash = answerHash;
         _engine = engine;
-        _faceUnlockAvailable = faceUnlockAvailable;
-        _quickVerifyAvailable = quickVerifyAvailable;
+        _settings = settings;
+        _methods = methods;
+        _quickVerify = quickVerify;
 
         Title = title;
-        Width = 420;
-        SizeToContent = SizeToContent.Height;
+        Width = 640;
+        Height = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         CanResize = false;
         Background = Palette.PageBg;
@@ -58,27 +77,56 @@ public sealed class PasswordWindow : Window
         }
         catch { }
 
-        var panel = new StackPanel { Spacing = 8, Margin = new Thickness(14) };
+        var grid = new Grid { Margin = new Thickness(0) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Star });
 
-        panel.Children.Add(new TextBlock
+        var left = new Border
+        {
+            Background = Palette.CardBg,
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            BorderBrush = Palette.Border,
+            Padding = new Thickness(12)
+        };
+        Grid.SetColumn(left, 0);
+
+        var leftStack = new StackPanel { Spacing = 10 };
+        leftStack.Children.Add(new TextBlock
+        {
+            Text = "验证方式",
+            FontSize = 14,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Palette.TextPrimary,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        _methodList = new StackPanel { Spacing = 4 };
+        leftStack.Children.Add(_methodList);
+        left.Child = leftStack;
+
+        var right = new Grid { Margin = new Thickness(20) };
+        Grid.SetColumn(right, 1);
+        right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Star });
+        right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        _titleText = new TextBlock
         {
             Text = prompt,
             Foreground = Palette.TextSecondary,
             FontSize = 13,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 4)
-        });
-
-        _pwd = new TextBox
-        {
-            PasswordChar = '*',
-            Watermark = "请输入密码",
-            FontSize = 14,
-            VerticalContentAlignment = VerticalAlignment.Center
+            Margin = new Thickness(0, 0, 0, 12)
         };
-        _pwd.KeyDown += (_, e) => { if (e.Key == Key.Enter) TrySubmit(); };
-        panel.Children.Add(_pwd);
+        Grid.SetRow(_titleText, 0);
+        right.Children.Add(_titleText);
 
+        _contentHost = new Panel();
+        Grid.SetRow(_contentHost, 1);
+        right.Children.Add(_contentHost);
+
+        var bottom = new StackPanel { Spacing = 8, Margin = new Thickness(0, 12, 0, 0) };
+        Grid.SetRow(bottom, 2);
         _hint = new TextBlock
         {
             Foreground = Palette.Danger,
@@ -86,87 +134,250 @@ public sealed class PasswordWindow : Window
             TextWrapping = TextWrapping.Wrap,
             IsVisible = false
         };
-        panel.Children.Add(_hint);
+        bottom.Children.Add(_hint);
 
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        _ok = new Button { Content = "确定", MinWidth = 96, Background = new SolidColorBrush(Color.Parse("#2563EB")), Foreground = new SolidColorBrush(Colors.White), Padding = new Thickness(10, 5) };
-        _ok.Click += (_, _) => TrySubmit();
-        var cancel = new Button { Content = "取消", MinWidth = 96, Padding = new Thickness(10, 5) };
-        cancel.Click += (_, _) => { Result = Outcome.Cancelled; Close(); };
-        row.Children.Add(_ok);
-        row.Children.Add(cancel);
-        panel.Children.Add(row);
+        var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        _cancelBtn = new Button { Content = "取消", MinWidth = 80, Padding = new Thickness(10, 5) };
+        _cancelBtn.Click += (_, _) => { Result = Outcome.Cancelled; Close(); };
+        btnRow.Children.Add(_cancelBtn);
+        bottom.Children.Add(btnRow);
 
-        if (!string.IsNullOrEmpty(_question))
+        var firstPwdWithQuestion = _methods.FirstOrDefault(m => m.Kind == AuthMethodKind.Password && !string.IsNullOrEmpty(m.GetPasswordOptions().SecurityQuestion));
+        if (firstPwdWithQuestion != null)
         {
-            var forget = MakeLink("忘记密码？");
-            forget.PointerPressed += (_, _) => ToggleRecovery();
-            panel.Children.Add(forget);
-
-            _recovery = new StackPanel { Spacing = 6, IsVisible = false, Margin = new Thickness(0, 4, 0, 0) };
-            _recovery.Children.Add(new TextBlock
+            var forget = new TextBlock
             {
-                Text = "保密问题：" + _question,
-                Foreground = Palette.TextSecondary,
-                FontSize = 13,
-                TextWrapping = TextWrapping.Wrap
-            });
-            _ans = new TextBox { PasswordChar = '*', Watermark = "请输入保密问题答案", FontSize = 14, VerticalContentAlignment = VerticalAlignment.Center };
-            _ans.KeyDown += (_, e) => { if (e.Key == Key.Enter) TryRecovery(); };
-            _recovery.Children.Add(_ans);
-            var ansBtn = new Button { Content = "提交", MinWidth = 96, Padding = new Thickness(10, 5) };
-            ansBtn.Click += (_, _) => TryRecovery();
-            _recovery.Children.Add(ansBtn);
-            panel.Children.Add(_recovery);
-        }
-
-        if (_faceUnlockAvailable && _engine != null)
-        {
-            _faceBtn = new Button
-            {
-                Content = "使用人脸解锁",
-                MinWidth = 120,
-                Padding = new Thickness(10, 5),
-                Margin = new Thickness(0, 8, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Background = new SolidColorBrush(Color.Parse("#16A34A")),
-                Foreground = new SolidColorBrush(Colors.White)
+                Text = "忘记密码？",
+                Foreground = new SolidColorBrush(ThemeService.IsDark ? Color.Parse("#60A5FA") : Color.Parse("#2563EB")),
+                FontSize = 12,
+                Cursor = new Cursor(StandardCursorType.Hand),
+                Margin = new Thickness(0, 4, 0, 0)
             };
-            _faceBtn.Click += (_, _) => _ = TryFaceUnlock();
-            panel.Children.Add(_faceBtn);
+            forget.PointerPressed += (_, _) => ToggleRecovery(firstPwdWithQuestion);
+            bottom.Children.Add(forget);
         }
 
-        Content = panel;
+        right.Children.Add(bottom);
+
+        grid.Children.Add(left);
+        grid.Children.Add(right);
+        Content = grid;
+
+        BuildMethodList();
+        SelectMethod(0, false);
+
         Loaded += (_, _) =>
         {
-            _pwd?.Focus();
-            if (_quickVerifyAvailable && _engine != null) _ = StartQuickVerify();
+            TryFocusInput();
+            if (_methods.Count > 0 && _methods[0].Kind == AuthMethodKind.QuickFace) _ = TryFaceVerify(auto: true);
         };
         _lockTimer.Tick += (_, _) => UpdateLockCountdown();
-        Closed += (_, _) => StopLockTimer();
+        Closed += (_, _) => Cleanup();
         RefreshLockoutUi();
     }
 
-    public static async Task<Outcome> ShowVerify(Window? owner, string title, string prompt, string storedHash, string? question = null, string? answerHash = null, PeekShieldEngine? engine = null, bool faceUnlockAvailable = false, bool quickVerifyAvailable = false)
+    public static PasswordWindow Create(string operation, string title, string prompt, string storedHash, string? question, string? answerHash, PeekShieldEngine? engine, PeekShieldSettings settings, bool quickVerify)
     {
-        var w = new PasswordWindow(title, prompt, storedHash, question, answerHash, engine, faceUnlockAvailable, quickVerifyAvailable);
+        var methods = settings.GetAuthMethodsForOperation(operation);
+        if (methods.Count == 0)
+        {
+            var fallback = new List<AuthMethodEntry>();
+            if (settings.PasswordEnabled) fallback.Add(new AuthMethodEntry { Id = "pwd", Kind = AuthMethodKind.Password });
+            if (settings.FaceUnlockEnabled && !settings.QuickVerifyEnabled) fallback.Add(new AuthMethodEntry { Id = "face", Kind = AuthMethodKind.Face });
+            if (settings.QuickVerifyEnabled) fallback.Add(new AuthMethodEntry { Id = "quickface", Kind = AuthMethodKind.QuickFace });
+            if (settings.SystemUnlockEnabled) fallback.Add(new AuthMethodEntry { Id = "sys", Kind = AuthMethodKind.System });
+            if (settings.UsbUnlockEnabled) fallback.Add(new AuthMethodEntry { Id = "usb", Kind = AuthMethodKind.Usb });
+            methods = fallback;
+        }
+        quickVerify = methods.Count > 0 && methods[0].Kind == AuthMethodKind.QuickFace;
+        return new PasswordWindow(operation, title, prompt, storedHash, question, answerHash, engine, settings, methods, quickVerify);
+    }
+
+    public static async Task<Outcome> ShowVerify(Window? owner, string operation, string title, string prompt, string storedHash, string? question, string? answerHash, PeekShieldEngine? engine, PeekShieldSettings settings, bool quickVerify)
+    {
+        var w = Create(operation, title, prompt, storedHash, question, answerHash, engine, settings, quickVerify);
         if (owner != null) await w.ShowDialog(owner);
         else w.Show();
         return w.Result;
     }
 
-    private void ToggleRecovery()
+    private static string KindLabel(AuthMethodKind k) => k switch
     {
-        if (_recovery != null) _recovery.IsVisible = !_recovery.IsVisible;
+        AuthMethodKind.Password => "密码",
+        AuthMethodKind.Face => "人脸识别",
+        AuthMethodKind.QuickFace => "快捷验证",
+        AuthMethodKind.System => "系统解锁",
+        AuthMethodKind.Usb => "U盘",
+        _ => "未知"
+    };
+
+    private void BuildMethodList()
+    {
+        if (_methodList == null) return;
+        _methodList.Children.Clear();
+        _methodButtons.Clear();
+        for (int i = 0; i < _methods.Count; i++)
+        {
+            var m = _methods[i];
+            var label = m.Kind == AuthMethodKind.Password && !string.IsNullOrEmpty(m.Name) ? m.Name : $"用{KindLabel(m.Kind)}继续";
+            var btn = new Button
+            {
+                Content = label,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(10, 8),
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0)
+            };
+            var idx = i;
+            btn.Click += (_, _) => SelectMethod(idx, true);
+            btn.PointerEntered += (_, _) => OnMethodHover(btn, idx, true);
+            btn.PointerExited += (_, _) => OnMethodHover(btn, idx, false);
+            _methodList.Children.Add(btn);
+            _methodButtons.Add(btn);
+        }
+    }
+
+    private void OnMethodHover(Button btn, int index, bool entered)
+    {
+        if (index == _selectedIndex) return;
+        if (entered)
+        {
+            btn.Background = Palette.ButtonBg;
+            btn.Foreground = Palette.TextPrimary;
+        }
+        else
+        {
+            btn.Background = Brushes.Transparent;
+            btn.Foreground = Palette.TextPrimary;
+        }
+    }
+
+    private void SelectMethod(int index, bool userAction = false)
+    {
+        if (index < 0 || index >= _methods.Count) return;
+        _selectedIndex = index;
+        _selectedMethod = _methods[index];
+        _selectedKind = _selectedMethod.Kind;
+        for (int i = 0; i < _methodButtons.Count; i++)
+        {
+            var b = _methodButtons[i];
+            if (i == index)
+            {
+                b.Background = Palette.AccentBg;
+                b.Foreground = Palette.AccentFg;
+            }
+            else
+            {
+                b.Background = Brushes.Transparent;
+                b.Foreground = Palette.TextPrimary;
+            }
+        }
+        RenderContent();
+        TryFocusInput();
+        if (_selectedKind == AuthMethodKind.QuickFace || (userAction && _selectedKind == AuthMethodKind.Face)) _ = TryFaceVerify(auto: true);
+    }
+
+    private void TryFocusInput()
+    {
+        if (_selectedKind == AuthMethodKind.Password)
+        {
+            _pwdBox?.Focus();
+        }
+    }
+
+    private void RenderContent()
+    {
+        if (_contentHost == null) return;
+        _contentHost.Children.Clear();
+        _facePreview = null;
+        _faceStatus = null;
+        _faceRetryBtn = null;
+        _pwdBox = null;
+        StopFaceVerify();
+
+        var kind = _selectedKind;
+        var panel = new StackPanel { Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
+
+        if (kind == AuthMethodKind.Password)
+        {
+            panel.VerticalAlignment = VerticalAlignment.Top;
+            _pwdBox = new TextBox
+            {
+                PasswordChar = '*',
+                Watermark = "请输入密码",
+                FontSize = 14,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = Palette.CardBg,
+                Foreground = Palette.TextPrimary,
+                BorderBrush = Palette.Border,
+                BorderThickness = new Thickness(1)
+            };
+            _pwdBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) TrySubmit(); };
+            panel.Children.Add(_pwdBox);
+
+            var ok = new Button { Content = "确定", MinWidth = 96, Background = new SolidColorBrush(Color.Parse("#2563EB")), Foreground = new SolidColorBrush(Colors.White), Padding = new Thickness(10, 5) };
+            ok.Click += (_, _) => TrySubmit();
+            panel.Children.Add(ok);
+        }
+        else if (kind == AuthMethodKind.Face || kind == AuthMethodKind.QuickFace)
+        {
+            _facePreview = new Image
+            {
+                Width = 280,
+                Height = 210,
+                Stretch = Stretch.Fill,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var previewBorder = new Border
+            {
+                Width = 280,
+                Height = 210,
+                Background = new SolidColorBrush(Color.Parse("#1F2937")),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Child = _facePreview
+            };
+            panel.Children.Add(previewBorder);
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            _faceStatus = new TextBlock { Text = "人脸识别验证中…", VerticalAlignment = VerticalAlignment.Center };
+            _faceRetryBtn = new Button { Content = "手动重新扫描", Padding = new Thickness(8, 4) };
+            _faceRetryBtn.Click += (_, _) => _ = TryFaceVerify(auto: false);
+            row.Children.Add(_faceStatus);
+            row.Children.Add(_faceRetryBtn);
+            panel.Children.Add(row);
+        }
+        else if (kind == AuthMethodKind.System)
+        {
+            var txt = new TextBlock { Text = "使用 Windows 系统凭据（PIN / 指纹 / 面容 / 密码）完成验证。", TextWrapping = TextWrapping.Wrap, Foreground = Palette.TextSecondary };
+            panel.Children.Add(txt);
+            var sys = new Button { Content = "使用系统解锁", MinWidth = 120, Padding = new Thickness(10, 5), Background = new SolidColorBrush(Color.Parse("#7C3AED")), Foreground = new SolidColorBrush(Colors.White) };
+            sys.Click += (_, _) => _ = TrySystemUnlock();
+            panel.Children.Add(sys);
+        }
+        else if (kind == AuthMethodKind.Usb)
+        {
+            var txt = new TextBlock { Text = "请插入已登记的U盘开始验证。", TextWrapping = TextWrapping.Wrap, Foreground = Palette.TextSecondary };
+            panel.Children.Add(txt);
+            var usb = new Button { Content = "扫描U盘", MinWidth = 120, Padding = new Thickness(10, 5), Background = new SolidColorBrush(Color.Parse("#0EA5E9")), Foreground = new SolidColorBrush(Colors.White) };
+            usb.Click += (_, _) => _ = TryUsbUnlock();
+            panel.Children.Add(usb);
+        }
+
+        _contentHost.Children.Add(panel);
     }
 
     private void TrySubmit()
     {
-        var input = _pwd?.Text ?? "";
-        if (SecurityService.TryUnlock(_stored, input, out var alt))
+        var input = _pwdBox?.Text ?? "";
+        var opts = _selectedMethod?.GetPasswordOptions();
+        var stored = opts?.PasswordHash ?? _stored;
+        if (SecurityService.TryUnlock(stored, input, out var alt))
         {
             StopLockTimer();
-            Result = Outcome.Ok;
+            if (alt) Result = Outcome.Recovery;
+            else Result = Outcome.Ok;
             Close();
             return;
         }
@@ -194,59 +405,155 @@ public sealed class PasswordWindow : Window
                 }
             }
         }
-        if (_pwd != null) _pwd.Text = "";
+        if (_pwdBox != null) _pwdBox.Text = "";
     }
 
-    private async Task TryFaceUnlock()
+    private async Task TryFaceVerify(bool auto)
     {
-        if (_busy || _engine == null) return;
+        if (_busy || _engine == null || _faceStatus == null) return;
         _busy = true;
-        if (_ok != null) _ok.IsEnabled = false;
-        if (_faceBtn != null) _faceBtn.IsEnabled = false;
-        if (_hint != null) { _hint.Text = "正在调用摄像头进行人脸验证…"; _hint.IsVisible = true; }
-        bool ok = false;
+        _faceStatus.Text = "人脸识别验证中…";
+        if (_facePreview != null) _facePreview.Source = null;
+        _faceCts = new CancellationTokenSource();
+        var cts = _faceCts;
         try
         {
-            ok = await _engine.VerifyUnlockAsync(msg => { if (_hint != null) { _hint.Text = msg; _hint.IsVisible = true; } });
+            var methodId = _selectedMethod?.Id ?? "";
+            bool ok = await _engine.VerifyFaceAuthAsync(
+                methodId,
+                msg => Dispatcher.UIThread.Post(() => { if (_faceStatus != null && !cts.IsCancellationRequested) _faceStatus.Text = msg; }),
+                mat => Dispatcher.UIThread.Post(() => UpdatePreview(mat)));
+            if (cts.IsCancellationRequested) return;
+            if (ok)
+            {
+                SecurityService.SetFaceUnlocked();
+                StopLockTimer();
+                Result = Outcome.Ok;
+                Close();
+                return;
+            }
+            _faceStatus.Text = auto ? "未识别到机主，请手动点击重新扫描。" : "人脸未匹配，请重试。";
         }
-        catch { ok = false; }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("人脸解锁弹窗异常：" + ex.Message);
+            _faceStatus.Text = "人脸验证异常，请换用其它方式。";
+        }
+        finally
+        {
+            _busy = false;
+            if (_faceCts == cts) _faceCts = null;
+        }
+    }
+
+    private void UpdatePreview(OpenCvSharp.Mat mat)
+    {
+        try
+        {
+            if (_facePreview == null || mat == null || mat.Empty()) return;
+            var bytes = mat.ToBytes(".png");
+            if (bytes == null || bytes.Length == 0) return;
+            using var ms = new MemoryStream(bytes);
+            var old = _facePreview.Source as IDisposable;
+            _facePreview.Source = new Bitmap(ms);
+            old?.Dispose();
+        }
+        catch { }
+        finally
+        {
+            mat.Dispose();
+        }
+    }
+
+    private void StopFaceVerify()
+    {
+        _faceCts?.Cancel();
+        _faceCts = null;
+    }
+
+    private async Task TrySystemUnlock()
+    {
+        if (_busy) return;
+        _busy = true;
+        SetAllEnabled(false);
+        if (_hint != null) { _hint.Text = "正在调用系统验证…"; _hint.IsVisible = true; }
+        var (ok, msg) = await SystemUnlockService.VerifyAsync("窥屿盾需要验证以解锁");
         if (ok)
         {
-            SecurityService.SetFaceUnlocked();
+            SecurityService.SetSystemUnlocked();
             StopLockTimer();
             Result = Outcome.Ok;
             Close();
             return;
         }
-        if (_hint != null) { _hint.Text = "人脸未匹配，请重试或使用密码解锁。"; _hint.IsVisible = true; }
-        if (_ok != null) _ok.IsEnabled = true;
-        if (_faceBtn != null) _faceBtn.IsEnabled = true;
+        if (_hint != null) { _hint.Text = msg; _hint.IsVisible = true; }
+        SetAllEnabled(true);
         _busy = false;
     }
 
-    private async Task StartQuickVerify()
+    private async Task TryUsbUnlock()
     {
-        if (_busy || _engine == null) return;
+        if (_busy) return;
         _busy = true;
-        if (_faceBtn != null) _faceBtn.IsEnabled = false;
-        if (_hint != null) { _hint.Text = "正在识别机主…（无需操作，识别成功将自动解锁）"; _hint.IsVisible = true; }
+        SetAllEnabled(false);
+        if (_hint != null) { _hint.Text = "正在检测U盘…"; _hint.IsVisible = true; }
+        var method = _methods[_selectedIndex];
+        var opts = method.GetUsbOptions();
         bool ok = false;
         try
         {
-            ok = await _engine.TryAutoVerifyAsync(msg => { if (_hint != null) { _hint.Text = msg; _hint.IsVisible = true; } });
+            ok = await Task.Run(() => UsbUnlockService.TryUnlock(opts.UseFileMode ? opts.TokenHash : opts.SerialHash, opts.UseFileMode));
         }
         catch { ok = false; }
         if (ok)
         {
-            SecurityService.SetFaceUnlocked();
+            SecurityService.SetUsbUnlocked();
             StopLockTimer();
             Result = Outcome.Ok;
             Close();
             return;
         }
+        if (_hint != null) { _hint.Text = "未检测到已登记的U盘，请插入后重试。"; _hint.IsVisible = true; }
+        SetAllEnabled(true);
         _busy = false;
-        if (_faceBtn != null) _faceBtn.IsEnabled = true;
-        if (_hint != null) { _hint.Text = "未识别到机主，请输入密码或使用人脸解锁。"; _hint.IsVisible = true; }
+    }
+
+    private void SetAllEnabled(bool enabled)
+    {
+        _cancelBtn?.SetValue(IsEnabledProperty, enabled);
+        foreach (var b in _methodButtons) b.IsEnabled = enabled;
+        _pwdBox?.SetValue(IsEnabledProperty, enabled);
+        _faceRetryBtn?.SetValue(IsEnabledProperty, enabled);
+    }
+
+    private void ToggleRecovery(AuthMethodEntry method)
+    {
+        if (_contentHost == null || _hint == null) return;
+        var opts = method.GetPasswordOptions();
+        _contentHost.Children.Clear();
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(new TextBlock { Text = "保密问题：" + opts.SecurityQuestion, Foreground = Palette.TextSecondary, FontSize = 13, TextWrapping = TextWrapping.Wrap });
+        var ans = new TextBox { PasswordChar = '*', Watermark = "请输入保密问题答案", FontSize = 14, VerticalContentAlignment = VerticalAlignment.Center, Background = Palette.CardBg, Foreground = Palette.TextPrimary, BorderBrush = Palette.Border, BorderThickness = new Thickness(1) };
+        ans.KeyDown += (_, e) => { if (e.Key == Key.Enter) TryRecovery(ans, method); };
+        panel.Children.Add(ans);
+        var submit = new Button { Content = "提交", MinWidth = 96, Padding = new Thickness(10, 5) };
+        submit.Click += (_, _) => TryRecovery(ans, method);
+        panel.Children.Add(submit);
+        _contentHost.Children.Add(panel);
+    }
+
+    private void TryRecovery(TextBox ans, AuthMethodEntry method)
+    {
+        var a = ans.Text ?? "";
+        var opts = method.GetPasswordOptions();
+        if (SecurityService.VerifySecret(opts.SecurityAnswerHash, a))
+        {
+            Result = Outcome.Recovery;
+            Close();
+            return;
+        }
+        if (_hint != null) { _hint.Text = "保密问题答案错误。"; _hint.IsVisible = true; }
+        ans.Text = "";
     }
 
     private void RefreshLockoutUi()
@@ -302,28 +609,10 @@ public sealed class PasswordWindow : Window
         if (_lockTimer.IsEnabled) _lockTimer.Stop();
     }
 
-    private void TryRecovery()
+    private void Cleanup()
     {
-        var ans = _ans?.Text ?? "";
-        if (SecurityService.VerifySecret(_answerHash ?? "", ans))
-        {
-            Result = Outcome.Recovery;
-            Close();
-            return;
-        }
-        if (_hint != null) { _hint.Text = "保密问题答案错误。"; _hint.IsVisible = true; }
-        if (_ans != null) _ans.Text = "";
-    }
-
-    private static TextBlock MakeLink(string text)
-    {
-        return new TextBlock
-        {
-            Text = text,
-            Foreground = new SolidColorBrush(ThemeService.IsDark ? Color.Parse("#60A5FA") : Color.Parse("#2563EB")),
-            FontSize = 12,
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Margin = new Thickness(0, 4, 0, 0)
-        };
+        StopLockTimer();
+        StopFaceVerify();
+        if (_facePreview?.Source is IDisposable d) d.Dispose();
     }
 }

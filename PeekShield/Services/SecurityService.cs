@@ -18,6 +18,8 @@ public sealed class SecurityService
     public static bool SessionUnlocked { get; private set; }
     public static bool SessionAlt { get; private set; }
     public static bool SessionFace { get; private set; }
+    public static bool SessionSystem { get; private set; }
+    public static bool SessionUsb { get; private set; }
     private static DateTime _unlockAt = DateTime.MinValue;
 
     public static PeekShieldSettings? Settings { get; set; }
@@ -27,6 +29,8 @@ public sealed class SecurityService
         SessionUnlocked = false;
         SessionAlt = false;
         SessionFace = false;
+        SessionSystem = false;
+        SessionUsb = false;
         _unlockAt = DateTime.MinValue;
     }
 
@@ -95,6 +99,22 @@ public sealed class SecurityService
         ResetLockout();
         SessionUnlocked = true;
         SessionFace = true;
+        _unlockAt = DateTime.UtcNow;
+    }
+
+    public static void SetSystemUnlocked()
+    {
+        ResetLockout();
+        SessionUnlocked = true;
+        SessionSystem = true;
+        _unlockAt = DateTime.UtcNow;
+    }
+
+    public static void SetUsbUnlocked()
+    {
+        ResetLockout();
+        SessionUnlocked = true;
+        SessionUsb = true;
         _unlockAt = DateTime.UtcNow;
     }
 

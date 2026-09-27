@@ -54,7 +54,23 @@ public class FaceEngine : IDisposable
         LastFrameStd = s.Val0;
         gray.Dispose();
 
-        var dlibFaces = _recognizer.Detect(frame);
+        Mat detectSrc = frame;
+        Mat? enhanced = null;
+        if (lowLight && LastFrameMean < 70)
+        {
+            enhanced = ClaheEnhance(frame);
+            if (enhanced != null) detectSrc = enhanced;
+        }
+
+        List<DlibFace> dlibFaces;
+        try
+        {
+            dlibFaces = _recognizer.Detect(detectSrc);
+        }
+        finally
+        {
+            enhanced?.Dispose();
+        }
         LastRawFaceCount = dlibFaces.Count;
 
         foreach (var df in dlibFaces)
@@ -90,5 +106,34 @@ public class FaceEngine : IDisposable
 
     public void Dispose()
     {
+    }
+
+    private static Mat? ClaheEnhance(Mat bgr)
+    {
+        var lab = new Mat();
+        var merged = new Mat();
+        var outMat = new Mat();
+        Mat[] ch = Array.Empty<Mat>();
+        try
+        {
+            Cv2.CvtColor(bgr, lab, ColorConversionCodes.BGR2Lab);
+            ch = Cv2.Split(lab);
+            using var clahe = Cv2.CreateCLAHE(2.0, new Size(8, 8));
+            clahe.Apply(ch[0], ch[0]);
+            Cv2.Merge(ch, merged);
+            Cv2.CvtColor(merged, outMat, ColorConversionCodes.Lab2BGR);
+            return outMat;
+        }
+        catch
+        {
+            outMat.Dispose();
+            return null;
+        }
+        finally
+        {
+            foreach (var c in ch) c.Dispose();
+            lab.Dispose();
+            merged.Dispose();
+        }
     }
 }

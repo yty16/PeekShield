@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PeekShield.Services;
@@ -133,9 +134,22 @@ public class PeekShieldSettings
 
     public bool FaceUnlockEnabled { get; set; } = false;
 
+    public bool SystemUnlockEnabled { get; set; } = false;
+
+    public bool UsbUnlockEnabled { get; set; } = false;
+    public string UsbUnlockTokenHash { get; set; } = "";
+    public string UsbUnlockDriveLabel { get; set; } = "";
+
     public bool QuickVerifyEnabled { get; set; } = false;
 
     public bool ProcessGuardEnabled { get; set; } = false;
+
+    public List<AuthMethodEntry> AuthMethods { get; set; } = new();
+
+    public List<string> ExitAuthIds { get; set; } = new();
+    public List<string> UninstallAuthIds { get; set; } = new();
+    public List<string> OpenMainAuthIds { get; set; } = new();
+    public List<string> OpenSecurityAuthIds { get; set; } = new();
 
     public CrashBehavior CrashBehaviorOnCrash { get; set; } = CrashBehavior.SilentRestart;
 
@@ -229,7 +243,222 @@ public class PeekShieldSettings
             SettingsVersion = 7;
             changed = true;
         }
+        if (SettingsVersion < 8)
+        {
+            SettingsVersion = 8;
+            if (SystemUnlockEnabled && !PasswordEnabled) SystemUnlockEnabled = false;
+            changed = true;
+        }
+        if (SettingsVersion < 9)
+        {
+            SettingsVersion = 9;
+            if (UsbUnlockEnabled && !PasswordEnabled) { UsbUnlockEnabled = false; UsbUnlockTokenHash = ""; UsbUnlockDriveLabel = ""; }
+            changed = true;
+        }
+        if (SettingsVersion < 10)
+        {
+            SettingsVersion = 10;
+            var defaultOps = new List<string> { "Exit", "Uninstall", "OpenMain", "OpenSecurity" };
+            var enabledOps = new List<string>();
+            if (ProtectExit) enabledOps.Add("Exit");
+            if (ProtectUninstall) enabledOps.Add("Uninstall");
+            if (ProtectOpenMain) enabledOps.Add("OpenMain");
+            if (ProtectOpenSecurity) enabledOps.Add("OpenSecurity");
+            if (enabledOps.Count == 0) enabledOps = new List<string>(defaultOps);
+
+            var allIds = new List<string>();
+            var passwordId = "";
+            if (PasswordEnabled)
+            {
+                passwordId = Guid.NewGuid().ToString("N");
+                var pwd = new AuthMethodEntry { Id = passwordId, Kind = AuthMethodKind.Password, Operations = new List<string>(enabledOps) };
+                allIds.Add(passwordId);
+                AuthMethods.Add(pwd);
+            }
+            if (FaceUnlockEnabled && PasswordEnabled)
+            {
+                var id = Guid.NewGuid().ToString("N");
+                var face = new AuthMethodEntry { Id = id, Kind = AuthMethodKind.Face, Operations = new List<string>(enabledOps) };
+                allIds.Add(id);
+                AuthMethods.Add(face);
+            }
+            if (SystemUnlockEnabled && PasswordEnabled && OperatingSystem.IsWindows())
+            {
+                var id = Guid.NewGuid().ToString("N");
+                var sys = new AuthMethodEntry { Id = id, Kind = AuthMethodKind.System, Operations = new List<string>(enabledOps) };
+                allIds.Add(id);
+                AuthMethods.Add(sys);
+            }
+            if (UsbUnlockEnabled && PasswordEnabled)
+            {
+                var id = Guid.NewGuid().ToString("N");
+                var usb = new AuthMethodEntry { Id = id, Kind = AuthMethodKind.Usb, Operations = new List<string>(enabledOps) };
+                var opts = new AuthUsbOptions { UseFileMode = true, TokenHash = UsbUnlockTokenHash, DriveLabel = UsbUnlockDriveLabel };
+                usb.SetUsbOptions(opts);
+                allIds.Add(id);
+                AuthMethods.Add(usb);
+            }
+            if (ProtectExit) ExitAuthIds = new List<string>(allIds);
+            if (ProtectUninstall) UninstallAuthIds = new List<string>(allIds);
+            if (ProtectOpenMain) OpenMainAuthIds = new List<string>(allIds);
+            if (ProtectOpenSecurity) OpenSecurityAuthIds = new List<string>(allIds);
+            changed = true;
+        }
+        if (SettingsVersion < 11)
+        {
+            SettingsVersion = 11;
+            var defaultOps = new List<string> { "Exit", "Uninstall", "OpenMain", "OpenSecurity" };
+            // 修复 v10 误把 id 写入 Operations/AuthIds 的问题
+            foreach (var m in AuthMethods)
+            {
+                if (m.Operations.Count > 0 && !m.Operations.All(defaultOps.Contains))
+                    m.Operations = new List<string>(defaultOps);
+            }
+            if (ExitAuthIds.Count > 0 && !ExitAuthIds.All(x => AuthMethods.Exists(m => m.Id == x)))
+            {
+                var ids = AuthMethods.Where(m => m.Operations.Contains("Exit")).Select(m => m.Id).ToList();
+                ExitAuthIds = ids.Count > 0 ? ids : new List<string>(AuthMethods.Select(m => m.Id));
+            }
+            if (UninstallAuthIds.Count > 0 && !UninstallAuthIds.All(x => AuthMethods.Exists(m => m.Id == x)))
+            {
+                var ids = AuthMethods.Where(m => m.Operations.Contains("Uninstall")).Select(m => m.Id).ToList();
+                UninstallAuthIds = ids.Count > 0 ? ids : new List<string>(AuthMethods.Select(m => m.Id));
+            }
+            if (OpenMainAuthIds.Count > 0 && !OpenMainAuthIds.All(x => AuthMethods.Exists(m => m.Id == x)))
+            {
+                var ids = AuthMethods.Where(m => m.Operations.Contains("OpenMain")).Select(m => m.Id).ToList();
+                OpenMainAuthIds = ids.Count > 0 ? ids : new List<string>(AuthMethods.Select(m => m.Id));
+            }
+            if (OpenSecurityAuthIds.Count > 0 && !OpenSecurityAuthIds.All(x => AuthMethods.Exists(m => m.Id == x)))
+            {
+                var ids = AuthMethods.Where(m => m.Operations.Contains("OpenSecurity")).Select(m => m.Id).ToList();
+                OpenSecurityAuthIds = ids.Count > 0 ? ids : new List<string>(AuthMethods.Select(m => m.Id));
+            }
+            // 把全局密码迁移到第一个 Password 条目中
+            if (PasswordEnabled)
+            {
+                var pwd = AuthMethods.Find(m => m.Kind == AuthMethodKind.Password);
+                if (pwd == null)
+                {
+                    pwd = new AuthMethodEntry { Id = Guid.NewGuid().ToString("N"), Kind = AuthMethodKind.Password, Operations = new List<string>(defaultOps) };
+                    AuthMethods.Insert(0, pwd);
+                }
+                var opts = pwd.GetPasswordOptions();
+                opts.PasswordHash = PasswordHash;
+                opts.SecurityQuestion = SecurityQuestion;
+                opts.SecurityAnswerHash = SecurityAnswerHash;
+                pwd.SetPasswordOptions(opts);
+            }
+            changed = true;
+        }
+        if (SettingsVersion < 12)
+        {
+            SettingsVersion = 12;
+            var defaultOps = new List<string> { "Exit", "Uninstall", "OpenMain", "OpenSecurity" };
+            // 把旧「快捷验证」全局开关转换为 QuickFace 认证条目
+            if (QuickVerifyEnabled && PasswordEnabled && !AuthMethods.Exists(m => m.Kind == AuthMethodKind.QuickFace))
+            {
+                var ops = new List<string>();
+                if (ProtectExit) ops.Add("Exit");
+                if (ProtectUninstall) ops.Add("Uninstall");
+                if (ProtectOpenMain) ops.Add("OpenMain");
+                if (ProtectOpenSecurity) ops.Add("OpenSecurity");
+                if (ops.Count == 0) ops = new List<string>(defaultOps);
+                AuthMethods.Add(new AuthMethodEntry { Kind = AuthMethodKind.QuickFace, Operations = ops });
+            }
+            // 确保旧 FaceUnlock 状态也覆盖 QuickFace（之前被遗漏）
+            FaceUnlockEnabled = AuthMethods.Exists(m => m.Kind == AuthMethodKind.Face || m.Kind == AuthMethodKind.QuickFace);
+            changed = true;
+        }
+        if (SettingsVersion < 13)
+        {
+            SettingsVersion = 13;
+            // 把旧全局 unlock 人脸数据迁移到第一个 Face/QuickFace 认证条目
+            var oldUnlockFile = Path.Combine(Platform.EnrollDir, "unlock", "embeddings.bin");
+            if (File.Exists(oldUnlockFile))
+            {
+                var target = AuthMethods.FirstOrDefault(m => m.Kind == AuthMethodKind.Face || m.Kind == AuthMethodKind.QuickFace);
+                if (target != null)
+                {
+                    var dir = Path.Combine(Platform.EnrollDir, "faces", target.Id);
+                    Directory.CreateDirectory(dir);
+                    var dest = Path.Combine(dir, "embeddings.bin");
+                    if (File.Exists(dest)) File.Delete(dest);
+                    File.Move(oldUnlockFile, dest);
+                }
+                try
+                {
+                    var oldUnlockDir = Path.Combine(Platform.EnrollDir, "unlock");
+                    if (Directory.Exists(oldUnlockDir)) Directory.Delete(oldUnlockDir);
+                }
+                catch { }
+            }
+            changed = true;
+        }
         if (changed) Save();
+    }
+
+    public bool AnyAuthMethodForOperation(string operation) => operation switch
+    {
+        "Exit" => ExitAuthIds.Count > 0,
+        "Uninstall" => UninstallAuthIds.Count > 0,
+        "OpenMain" => OpenMainAuthIds.Count > 0,
+        "OpenSecurity" => OpenSecurityAuthIds.Count > 0,
+        _ => false
+    };
+
+    public List<AuthMethodEntry> GetAuthMethodsForOperation(string operation)
+    {
+        var result = new List<AuthMethodEntry>();
+        foreach (var m in AuthMethods)
+        {
+            if (m.Operations.Contains(operation)) result.Add(m);
+        }
+        return result;
+    }
+
+    public void SyncLegacyAuthBooleans()
+    {
+        FaceUnlockEnabled = AuthMethods.Exists(m => m.Kind == AuthMethodKind.Face || m.Kind == AuthMethodKind.QuickFace);
+        QuickVerifyEnabled = AuthMethods.Exists(m => m.Kind == AuthMethodKind.QuickFace);
+        SystemUnlockEnabled = AuthMethods.Exists(m => m.Kind == AuthMethodKind.System);
+        UsbUnlockEnabled = AuthMethods.Exists(m => m.Kind == AuthMethodKind.Usb);
+        var usb = AuthMethods.Find(m => m.Kind == AuthMethodKind.Usb);
+        if (usb != null)
+        {
+            var opts = usb.GetUsbOptions();
+            UsbUnlockTokenHash = opts.UseFileMode ? opts.TokenHash : "";
+            UsbUnlockDriveLabel = opts.DriveLabel;
+        }
+        else
+        {
+            UsbUnlockTokenHash = "";
+            UsbUnlockDriveLabel = "";
+        }
+        PasswordEnabled = AuthMethods.Exists(m => m.Kind == AuthMethodKind.Password);
+        var pwd = AuthMethods.Find(m => m.Kind == AuthMethodKind.Password);
+        if (pwd != null)
+        {
+            var opts = pwd.GetPasswordOptions();
+            PasswordHash = opts.PasswordHash;
+            SecurityQuestion = opts.SecurityQuestion;
+            SecurityAnswerHash = opts.SecurityAnswerHash;
+        }
+        else
+        {
+            PasswordHash = "";
+            SecurityQuestion = "";
+            SecurityAnswerHash = "";
+        }
+        ProtectExit = AuthMethods.Any(m => m.Operations.Contains("Exit"));
+        ProtectUninstall = AuthMethods.Any(m => m.Operations.Contains("Uninstall"));
+        ProtectOpenMain = AuthMethods.Any(m => m.Operations.Contains("OpenMain"));
+        ProtectOpenSecurity = AuthMethods.Any(m => m.Operations.Contains("OpenSecurity"));
+        // 兼容性：operation id 列表也同步为启用了对应操作的条目 id
+        ExitAuthIds = AuthMethods.Where(m => m.Operations.Contains("Exit")).Select(m => m.Id).ToList();
+        UninstallAuthIds = AuthMethods.Where(m => m.Operations.Contains("Uninstall")).Select(m => m.Id).ToList();
+        OpenMainAuthIds = AuthMethods.Where(m => m.Operations.Contains("OpenMain")).Select(m => m.Id).ToList();
+        OpenSecurityAuthIds = AuthMethods.Where(m => m.Operations.Contains("OpenSecurity")).Select(m => m.Id).ToList();
     }
 
     private bool Sanitize()
@@ -263,6 +492,7 @@ public class PeekShieldSettings
     {
         try
         {
+            SyncLegacyAuthBooleans();
             Directory.CreateDirectory(Platform.AppDataDir);
             var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(SettingsPath, json);
@@ -287,9 +517,19 @@ public class PeekShieldSettings
         PasswordLockoutUntil = DateTime.MinValue;
         PasswordLockoutLevel = 0;
         FaceUnlockEnabled = false;
+        SystemUnlockEnabled = false;
+        UsbUnlockEnabled = false;
+        UsbUnlockTokenHash = "";
+        UsbUnlockDriveLabel = "";
         QuickVerifyEnabled = false;
         ProcessGuardEnabled = false;
+        AuthMethods = new List<AuthMethodEntry>();
+        ExitAuthIds = new List<string>();
+        UninstallAuthIds = new List<string>();
+        OpenMainAuthIds = new List<string>();
+        OpenSecurityAuthIds = new List<string>();
         RemoveUnlockData();
+        RemoveFaceAuthData();
         Save();
     }
 
@@ -303,6 +543,16 @@ public class PeekShieldSettings
                 foreach (var f in Directory.GetFiles(dir)) File.Delete(f);
                 Directory.Delete(dir);
             }
+        }
+        catch { }
+    }
+
+    private static void RemoveFaceAuthData()
+    {
+        try
+        {
+            var dir = Path.Combine(Platform.EnrollDir, "faces");
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
         }
         catch { }
     }

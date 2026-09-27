@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -12,23 +14,21 @@ namespace PeekShield.Views;
 public sealed class SetPasswordWindow : Window
 {
     private readonly PeekShieldSettings _s;
-
+    private readonly AuthMethodEntry? _entry;
+    private readonly bool _isNew;
     private TextBox? _pwd;
     private TextBox? _confirm;
     private TextBox? _qBox;
     private TextBox? _aBox;
     private CheckBox? _qCheck;
     private StackPanel? _qPanel;
-    private CheckBox? _exitChk;
-    private CheckBox? _uninstallChk;
-    private CheckBox? _openMainChk;
-    private CheckBox? _openSecChk;
     private TextBlock? _hint;
-    private TextBlock? _uninstallWarn;
 
-    public SetPasswordWindow(PeekShieldSettings s, string title)
+    public SetPasswordWindow(PeekShieldSettings s, AuthMethodEntry? entry = null, string title = "设置密码")
     {
         _s = s;
+        _entry = entry;
+        _isNew = entry == null;
         Title = title;
         Width = 480;
         SizeToContent = SizeToContent.Height;
@@ -48,7 +48,7 @@ public sealed class SetPasswordWindow : Window
 
         var panel = new StackPanel { Spacing = 8, Margin = new Thickness(14) };
 
-        panel.Children.Add(MakeLabel("设置密码（至少 4 位）"));
+        panel.Children.Add(MakeLabel(_isNew ? "设置新密码（至少 4 位）" : "重新设置密码（至少 4 位）"));
         _pwd = new TextBox { PasswordChar = '*', Watermark = "请输入密码", FontSize = 14, VerticalContentAlignment = VerticalAlignment.Center };
         panel.Children.Add(_pwd);
         _confirm = new TextBox { PasswordChar = '*', Watermark = "请再次输入密码", FontSize = 14, VerticalContentAlignment = VerticalAlignment.Center };
@@ -56,35 +56,20 @@ public sealed class SetPasswordWindow : Window
 
         var qToggle = new CheckBox { Content = "设置保密问题（防止忘记密码时无法找回）", Margin = new Thickness(0, 6, 0, 0) };
         _qCheck = qToggle;
+        var opts = entry?.GetPasswordOptions();
+        if (!string.IsNullOrEmpty(opts?.SecurityQuestion))
+        {
+            qToggle.IsChecked = true;
+        }
         qToggle.IsCheckedChanged += (_, _) => { if (_qPanel != null) _qPanel.IsVisible = qToggle.IsChecked == true; };
         panel.Children.Add(qToggle);
 
-        _qPanel = new StackPanel { Spacing = 6, IsVisible = false, Margin = new Thickness(0, 2, 0, 0) };
-        _qBox = new TextBox { Watermark = "保密问题，如：我小学的名字？", FontSize = 13, VerticalContentAlignment = VerticalAlignment.Center };
+        _qPanel = new StackPanel { Spacing = 6, IsVisible = qToggle.IsChecked == true, Margin = new Thickness(0, 2, 0, 0) };
+        _qBox = new TextBox { Watermark = "保密问题，如：我小学的名字？", FontSize = 13, VerticalContentAlignment = VerticalAlignment.Center, Text = opts?.SecurityQuestion ?? "" };
         _qPanel.Children.Add(_qBox);
         _aBox = new TextBox { PasswordChar = '*', Watermark = "保密问题答案", FontSize = 13, VerticalContentAlignment = VerticalAlignment.Center };
         _qPanel.Children.Add(_aBox);
         panel.Children.Add(_qPanel);
-
-        panel.Children.Add(MakeLabel("密码保护范围（勾选后在对应操作前需验证密码）"));
-        _exitChk = MakeScope("退出应用", false);
-        _uninstallChk = MakeScope("卸载应用", false);
-        _openMainChk = MakeScope("打开主页面", false);
-        _openSecChk = MakeScope("打开安全设置", true);
-        panel.Children.Add(_exitChk);
-        panel.Children.Add(_uninstallChk);
-        panel.Children.Add(_openMainChk);
-        panel.Children.Add(_openSecChk);
-
-        _uninstallChk.IsCheckedChanged += (_, _) => UpdateUninstallWarn();
-        _uninstallWarn = new TextBlock
-        {
-            Foreground = Palette.Danger,
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
-            IsVisible = false
-        };
-        panel.Children.Add(_uninstallWarn);
 
         panel.Children.Add(new TextBlock
         {
@@ -113,20 +98,7 @@ public sealed class SetPasswordWindow : Window
     public bool ShowWithResult(Window owner)
     {
         ShowDialog(owner);
-        return _s.PasswordEnabled;
-    }
-
-    private CheckBox MakeScope(string label, bool isChecked)
-    {
-        return new CheckBox { Content = label, IsChecked = isChecked, Margin = new Thickness(0, 2, 0, 2) };
-    }
-
-    private void UpdateUninstallWarn()
-    {
-        if (_uninstallWarn == null) return;
-        bool on = _uninstallChk?.IsChecked == true;
-        _uninstallWarn.Text = on ? "⚠ 启用卸载保护后，若忘记密码且未设置保密问题，将无法卸载本软件。" : "";
-        _uninstallWarn.IsVisible = on;
+        return _s.AuthMethods.Exists(m => m.Kind == AuthMethodKind.Password && m.Operations.Count > 0);
     }
 
     private static TextBlock MakeLabel(string text) => new()
@@ -155,17 +127,46 @@ public sealed class SetPasswordWindow : Window
             ah = SecurityService.HashSecret(a);
         }
 
-        _s.PasswordEnabled = true;
-        _s.PasswordHash = SecurityService.HashSecret(pwd);
-        _s.SecurityQuestion = q;
-        _s.SecurityAnswerHash = ah;
+        var newOpts = new AuthPasswordOptions
+        {
+            PasswordHash = SecurityService.HashSecret(pwd),
+            SecurityQuestion = q,
+            SecurityAnswerHash = ah
+        };
+
+        if (_entry == null)
+        {
+            var count = _s.AuthMethods.Count(m => m.Kind == AuthMethodKind.Password);
+            var isAdmin = count == 0;
+            var entry = new AuthMethodEntry
+            {
+                Kind = AuthMethodKind.Password,
+                Name = isAdmin ? "管理员密码" : $"用户密码 {count + 1}",
+                Operations = BuildDefaultOperations(isAdmin)
+            };
+            entry.SetPasswordOptions(newOpts);
+            _s.AuthMethods.Add(entry);
+        }
+        else
+        {
+            _entry.SetPasswordOptions(newOpts);
+            // 修改密码时不改动保护范围，保护范围在 AuthMethodsDialog 统一管理
+        }
         SecurityService.ResetLockout();
-        _s.ProtectExit = _exitChk?.IsChecked == true;
-        _s.ProtectUninstall = _uninstallChk?.IsChecked == true;
-        _s.ProtectOpenMain = _openMainChk?.IsChecked == true;
-        _s.ProtectOpenSecurity = _openSecChk?.IsChecked == true;
+        _s.SyncLegacyAuthBooleans();
         _s.Save();
         Close();
+    }
+
+    private List<string> BuildDefaultOperations(bool isAdmin)
+    {
+        var ops = new List<string>();
+        if (_s.ProtectExit) ops.Add("Exit");
+        if (_s.ProtectUninstall) ops.Add("Uninstall");
+        if (_s.ProtectOpenMain) ops.Add("OpenMain");
+        if (_s.ProtectOpenSecurity) ops.Add("OpenSecurity");
+        if (ops.Count == 0) ops = new List<string> { "Exit", "Uninstall", "OpenMain", "OpenSecurity" };
+        return ops;
     }
 
     private void ShowHint(string text)

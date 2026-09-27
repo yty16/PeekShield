@@ -9,7 +9,7 @@ SetCompressor lzma
 !include "nsDialogs.nsh"
 
 !define APPNAME "PeekShield"
-!define APPVERSION "1.2.2.0"
+!define APPVERSION "1.2.3.0"
 !define PUBLISHER "yty16"
 !define EXENAME "PeekShield.exe"
 !define APPDIR "$LOCALAPPDATA\Programs\${APPNAME}"
@@ -17,7 +17,7 @@ SetCompressor lzma
 !define PROJECTROOT "${__FILEDIR__}\.."
 
 Name "${APPNAME} ${APPVERSION}"
-OutFile "${PROJECTROOT}\installer\PeekShield-1.2.2.0-win-x64-setup.exe"
+OutFile "${PROJECTROOT}\installer\PeekShield-1.2.3.0-win-x64-setup.exe"
 InstallDir "${APPDIR}"
 RequestExecutionLevel user
 
@@ -43,6 +43,9 @@ RequestExecutionLevel user
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DirectoryLeave
 !insertmacro MUI_PAGE_DIRECTORY
 
+; 安装方式页（仅在检测到已有安装痕迹时显示）
+Page custom InstallTypePage InstallTypeLeave
+
 !insertmacro MUI_PAGE_INSTFILES
 
 !define MUI_FINISHPAGE_TITLE "完成 ${APPNAME} 安装"
@@ -65,6 +68,10 @@ Var unOptConfig
 Var unOptData
 Var hChkConfig
 Var hChkData
+
+; ---------- Variables (install mode) ----------
+Var hRadUpgrade
+Var hRadFresh
 
 ; ---------- OS / permission check ----------
 Function .onInit
@@ -90,6 +97,51 @@ Function DirectoryLeave
     FileWrite $2 "test"
     FileClose $2
     Delete "$INSTDIR\_writetest.tmp"
+  ${EndIf}
+FunctionEnd
+
+; ---------- Install mode page (全新安装 / 标准安装) ----------
+Function InstallTypePage
+  ReadRegStr $R0 "HKCU" "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayName"
+  IfFileExists "${DATADIR}\settings.json" install_mode_show
+  ${If} $R0 == ""
+    Abort
+  ${EndIf}
+install_mode_show:
+
+  nsDialogs::Create /SIZE 330x150 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 16u "检测到本机已有 ${APPNAME} 的安装，请选择安装方式："
+  Pop $0
+
+  ${NSD_CreateRadioButton} 0 24u 100% 18u "标准安装（推荐）：保留已有的设置、人脸录入与日志，仅更新程序文件"
+  Pop $hRadUpgrade
+
+  ${NSD_CreateRadioButton} 0 48u 100% 18u "全新安装：清除已有的设置、人脸录入与日志，从零开始配置"
+  Pop $hRadFresh
+  ${NSD_Check} $hRadUpgrade
+
+  ${NSD_CreateLabel} 0 74u 100% 40u "全新安装将删除 ${DATADIR} 下的全部内容（设置、人脸录入、日志），密码与人脸录入需要重新设置。"
+  Pop $0
+
+  nsDialogs::Show
+FunctionEnd
+
+Function InstallTypeLeave
+  SendMessage $hRadFresh 0x00F2 0 0 $0
+  ${If} $0 == 1
+    MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "全新安装将清除本机已有的 ${APPNAME} 设置、人脸录入与日志，该操作不可恢复。确定继续吗？" /SD IDCANCEL
+    Pop $1
+    ${If} $1 == IDCANCEL
+      Abort
+    ${EndIf}
+    DetailPrint "正在清除旧的 PeekShield 数据..."
+    ExecWait 'taskkill /F /IM "${EXENAME}"'
+    RMDir /r "${DATADIR}"
   ${EndIf}
 FunctionEnd
 

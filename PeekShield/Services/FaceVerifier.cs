@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace PeekShield.Services;
 
@@ -14,6 +15,11 @@ public class FaceVerifier
 
     public bool IsEnrolled { get { lock (_lock) return _samples.Count > 0; } }
     public int SampleCount { get { lock (_lock) return _samples.Count; } }
+
+    internal IReadOnlyList<float[]> GetSamples()
+    {
+        lock (_lock) { return _samples.Select(s => (float[])s.Clone()).ToList(); }
+    }
 
     public double LastDistance { get; private set; } = double.MaxValue;
     public double LastThreshold { get; private set; }

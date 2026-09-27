@@ -40,7 +40,6 @@ public partial class MainWindow : Window
     private TextBlock? _statusText;
     private TextBlock? _enrollHint;
     private TextBlock? _faceHint;
-    private TextBlock? _quickHint;
     private TextBlock? _guardHint;
     private ComboBox? _camComboBox;
     private ComboBox? _sensComboBox;
@@ -152,7 +151,7 @@ public partial class MainWindow : Window
     {
         if (_mainLocked)
         {
-            var r = await PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled, _engine.QuickVerifyAvailable);
+            var r = await PasswordWindow.ShowVerify(this, "OpenMain", "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S, _engine.QuickVerifyAvailable);
             if (r == PasswordWindow.Outcome.Recovery)
             {
                 HandlePasswordRecovery();
@@ -165,7 +164,7 @@ public partial class MainWindow : Window
         }
         if (S.PasswordEnabled && S.ProtectOpenSecurity && !IsSecurityUnlockedNow())
         {
-            var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled, _engine.QuickVerifyAvailable);
+            var r = await PasswordWindow.ShowVerify(this, "OpenSecurity", "安全设置验证", "请输入密码以管理安全设置。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S, _engine.QuickVerifyAvailable);
             if (r == PasswordWindow.Outcome.Recovery)
             {
                 HandlePasswordRecovery();
@@ -1306,7 +1305,7 @@ public partial class MainWindow : Window
 
     private async void TryOpenMainUnlock()
     {
-        var r = await PasswordWindow.ShowVerify(this, "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S.FaceUnlockEnabled, _engine.QuickVerifyAvailable);
+        var r = await PasswordWindow.ShowVerify(this, "OpenMain", "解锁主页面", "输入密码以打开窥屿盾主页面。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S, _engine.QuickVerifyAvailable);
         if (r == PasswordWindow.Outcome.Recovery)
         {
             HandlePasswordRecovery();
@@ -1357,10 +1356,10 @@ public partial class MainWindow : Window
         {
             _securityBody.Children.Add(new TextBlock
             {
-                Text = "尚未启用密码保护。启用后可为退出 / 卸载 / 打开主页面 / 打开安全设置增加密码验证。",
+                Text = "尚未启用密码保护。启用后可为退出 / 卸载 / 打开主页面 / 打开安全设置增加认证验证。",
                 FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap
             });
-            _securityBody.Children.Add(MakeButton("设置密码", (_) => OpenSetPassword("设置密码")));
+            _securityBody.Children.Add(MakeButton("编辑认证方式", (_) => OpenAuthMethodsDialog()));
             return;
         }
 
@@ -1374,7 +1373,7 @@ public partial class MainWindow : Window
             });
             _securityBody.Children.Add(MakeButton("验证密码", async (_) =>
             {
-                var r = await PasswordWindow.ShowVerify(this, "安全设置验证", "请输入密码以管理安全设置。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash, _engine, s.FaceUnlockEnabled, _engine.QuickVerifyAvailable);
+                var r = await PasswordWindow.ShowVerify(this, "OpenSecurity", "安全设置验证", "请输入密码以管理安全设置。", s.PasswordHash, s.SecurityQuestion, s.SecurityAnswerHash, _engine, s, _engine.QuickVerifyAvailable);
                 if (r == PasswordWindow.Outcome.Recovery) { HandlePasswordRecovery(); return; }
                 if (r == PasswordWindow.Outcome.Ok) { _securityUnlocked = true; RenderSecurityContent(); }
             }));
@@ -1404,21 +1403,17 @@ public partial class MainWindow : Window
         });
         _securityBody.Children.Add(sessRow);
 
-        BuildFaceUnlockSection(_securityBody);
-        BuildQuickVerifySection(_securityBody);
+        _faceHint = new TextBlock
+        {
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            IsVisible = false, Margin = new Thickness(0, 6, 0, 0)
+        };
+        _securityBody.Children.Add(_faceHint);
+
+        BuildAuthMethodsSection(_securityBody);
         BuildProcessGuardSection(_securityBody);
 
-        _securityBody.Children.Add(MakeButton("修改密码", (_) => OpenSetPassword("修改密码")));
         _securityBody.Children.Add(MakeButton("关闭密码保护", (_) => DisablePasswordProtection()));
-        if (SecurityService.SessionAlt)
-        {
-            _securityBody.Children.Add(new TextBlock
-            {
-                Text = "已解锁：可执行密码重置与关闭保护。",
-                FontSize = 12, Foreground = new SolidColorBrush(Color.Parse("#16A34A")), TextWrapping = TextWrapping.Wrap
-            });
-            _securityBody.Children.Add(MakeButton("重置密码", (_) => OpenSetPassword("重置密码")));
-        }
         if (!string.IsNullOrEmpty(s.SecurityQuestion))
             _securityBody.Children.Add(new TextBlock { Text = "已设置保密问题：" + s.SecurityQuestion, FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
         else
@@ -1429,7 +1424,7 @@ public partial class MainWindow : Window
 
     private void OpenSetPassword(string title)
     {
-        var w = new SetPasswordWindow(S, title);
+        var w = new SetPasswordWindow(S, null, title);
         w.Closed += (_, _) => { RenderSecurityContent(); RefreshStatus(); };
         w.ShowDialog(this);
     }
@@ -1448,7 +1443,7 @@ public partial class MainWindow : Window
             S.ProcessGuardEnabled = false;
             S.Save();
             GuardianService.Stop();
-            _engine.ClearUnlock();
+            _engine.ClearAllFaceAuth();
             _securityUnlocked = false;
             SecurityService.ResetSession();
             RenderSecurityContent();
@@ -1457,70 +1452,32 @@ public partial class MainWindow : Window
         cd.ShowDialog(this);
     }
 
-    private void BuildFaceUnlockSection(StackPanel body)
+    private static readonly (string Id, string Label)[] AllOperations =
     {
-        var sep = new Border
+        ("Exit", "退出"), ("Uninstall", "卸载"), ("OpenMain", "打开主页面"), ("OpenSecurity", "打开安全设置")
+    };
+
+    private static string AuthKindLabel(AuthMethodKind k) => k switch
+    {
+        AuthMethodKind.Password => "密码",
+        AuthMethodKind.Face => "人脸识别",
+        AuthMethodKind.QuickFace => "快捷验证",
+        AuthMethodKind.System => "系统解锁",
+        AuthMethodKind.Usb => "U盘",
+        _ => "未知"
+    };
+
+    private void BuildAuthMethodsSection(StackPanel body)
+    {
+        body.Children.Add(new Border
         {
             Height = 1,
             Background = Palette.Border,
             Margin = new Thickness(0, 10, 0, 8)
-        };
-        body.Children.Add(sep);
-        body.Children.Add(new TextBlock
-        {
-            Text = "刷脸解锁（可选）",
-            FontSize = 13,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Palette.TextPrimary,
-            Margin = new Thickness(0, 0, 0, 4)
         });
-
-        if (!S.FaceUnlockEnabled)
-        {
-            body.Children.Add(new TextBlock
-            {
-                Text = "可用本机摄像头刷脸代替密码完成验证（解锁主页面、安全设置、退出与卸载），也可上传一张正脸照片完成录入。需先设置密码（当前已满足）。",
-                FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 6)
-            });
-            body.Children.Add(MakeButton("启用刷脸解锁", async (_) => await DoEnrollUnlock()));
-            body.Children.Add(MakeButton("上传图片录入", async (_) => await DoEnrollUnlockFromPhoto()));
-        }
-        else
-        {
-            body.Children.Add(new TextBlock
-            {
-                Text = "已启用刷脸解锁：验证密码时可直接点击「使用人脸解锁」完成验证；刷脸与密码可同时使用。",
-                FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 6)
-            });
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            row.Children.Add(MakeButton("重新录入", async (_) => await DoEnrollUnlock()));
-            row.Children.Add(MakeButton("上传图片录入", async (_) => await DoEnrollUnlockFromPhoto()));
-            row.Children.Add(MakeButton("关闭刷脸解锁", (_) => DoDisableFaceUnlock()));
-            body.Children.Add(row);
-        }
-
-        _faceHint = new TextBlock
-        {
-            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
-            IsVisible = false, Margin = new Thickness(0, 6, 0, 0)
-        };
-        body.Children.Add(_faceHint);
-    }
-
-    private void BuildQuickVerifySection(StackPanel body)
-    {
-        var sep = new Border
-        {
-            Height = 1,
-            Background = Palette.Border,
-            Margin = new Thickness(0, 10, 0, 8)
-        };
-        body.Children.Add(sep);
         body.Children.Add(new TextBlock
         {
-            Text = "快捷验证（自动刷脸解锁，可选）",
+            Text = "认证方式（解锁顺序）",
             FontSize = 13,
             FontWeight = FontWeight.SemiBold,
             Foreground = Palette.TextPrimary,
@@ -1528,20 +1485,83 @@ public partial class MainWindow : Window
         });
         body.Children.Add(new TextBlock
         {
-            Text = "开启后，在需要验证的场景（解锁主页面、安全设置、退出、卸载）会先自动通过摄像头识别机主，识别成功即自动解锁，无需输入密码。无需单独录入解锁人脸，直接复用已录入的机主人脸；但需先设置密码且已录入机主人脸。",
+            Text = "每种操作可搭配多种方式，解锁弹窗默认使用列表最上方的方式。可重复添加同一方式，拖动「⠿」调整先后顺序；每项可单独勾选生效的操作。",
             FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 6)
         });
 
-        var cb = MakeCheck("启用快捷验证（自动刷脸解锁）", S.QuickVerifyEnabled, v => DoToggleQuickVerify(v));
-        body.Children.Add(cb);
-
-        _quickHint = new TextBlock
+        var list = new StackPanel { Spacing = 6 };
+        var methods = S.AuthMethods;
+        if (methods.Count == 0)
         {
-            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
-            IsVisible = false, Margin = new Thickness(0, 6, 0, 0)
+            list.Children.Add(new TextBlock
+            {
+                Text = "尚未添加认证方式。添加后即可除密码之外，用人脸 / 系统凭据 / U盘完成验证。",
+                FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap
+            });
+        }
+        foreach (var m in methods) list.Children.Add(BuildAuthMethodCard(m));
+        body.Children.Add(list);
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
+        row.Children.Add(MakeButton("编辑认证方式", (_) => OpenAuthMethodsDialog()));
+        body.Children.Add(row);
+    }
+
+    private static Border BuildAuthMethodCard(AuthMethodEntry m)
+    {
+        var card = new Border
+        {
+            Background = Palette.CardBg,
+            BorderBrush = Palette.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10)
         };
-        body.Children.Add(_quickHint);
+        var stack = new StackPanel { Spacing = 4 };
+
+        var top = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        top.Children.Add(new TextBlock { Text = "⠿", FontSize = 13, Foreground = Palette.TextMuted, VerticalAlignment = VerticalAlignment.Center });
+        top.Children.Add(new TextBlock { Text = "用" + AuthKindLabel(m.Kind) + "继续", FontSize = 13, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+        if (m.Operations.Count == 0)
+            top.Children.Add(new TextBlock { Text = "（未勾选生效的操作）", FontSize = 12, Foreground = Palette.TextMuted, VerticalAlignment = VerticalAlignment.Center });
+        foreach (var op in AllOperations)
+            if (m.Operations.Contains(op.Id))
+                top.Children.Add(new Border
+                {
+                    Background = Palette.AccentBg,
+                    Padding = new Thickness(6, 2),
+                    CornerRadius = new CornerRadius(10),
+                    Child = new TextBlock { Text = op.Label, FontSize = 11, Foreground = Palette.AccentFg }
+                });
+        stack.Children.Add(top);
+
+        if (m.Kind == AuthMethodKind.Usb)
+        {
+            var u = m.GetUsbOptions();
+            stack.Children.Add(new TextBlock
+            {
+                Text = (u.UseFileMode ? "文件模式（写入隐藏密钥文件）" : "序列号模式（读取卷序列号，不写文件）")
+                       + (string.IsNullOrEmpty(u.DriveLabel) ? "，尚未登记U盘" : "，已登记：" + u.DriveLabel),
+                FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap
+            });
+        }
+
+        card.Child = stack;
+        return card;
+    }
+
+    private void OpenAuthMethodsDialog()
+    {
+        var dlg = new AuthMethodsDialog(S, _engine);
+        dlg.Closed += (_, _) =>
+        {
+            S.Save();
+            _engine.ReloadFaceAuthVerifiers();
+            RenderSecurityContent();
+            RefreshStatus();
+        };
+        dlg.ShowDialog(this);
     }
 
     private void BuildProcessGuardSection(StackPanel body)
@@ -1603,95 +1623,6 @@ public partial class MainWindow : Window
         GuardianService.Sync();
         if (_guardHint != null) { _guardHint.Text = "✓ 已启用进程保护，进程被强制结束将自动重启。"; _guardHint.IsVisible = true; }
         RenderSecurityContent();
-    }
-
-    private void DoToggleQuickVerify(bool on)
-    {
-        if (!on)
-        {
-            S.QuickVerifyEnabled = false;
-            S.Save();
-            if (_quickHint != null) { _quickHint.Text = "已关闭快捷验证。"; _quickHint.IsVisible = true; }
-            RenderSecurityContent();
-            return;
-        }
-        if (!S.PasswordEnabled)
-        {
-            S.QuickVerifyEnabled = false;
-            S.Save();
-            if (_quickHint != null) { _quickHint.Text = "需先设置密码后才能启用快捷验证。"; _quickHint.IsVisible = true; }
-            RenderSecurityContent();
-            return;
-        }
-        if (!_engine.IsEnrolled)
-        {
-            S.QuickVerifyEnabled = false;
-            S.Save();
-            if (_quickHint != null) { _quickHint.Text = "需先录入机主人脸（设置页「录入人脸」或「上传照片录入」）后才能启用快捷验证。"; _quickHint.IsVisible = true; }
-            RenderSecurityContent();
-            return;
-        }
-        S.QuickVerifyEnabled = true;
-        S.Save();
-        if (_quickHint != null) { _quickHint.Text = "✓ 已启用快捷验证，验证时将自动识别机主解锁。"; _quickHint.IsVisible = true; }
-        RenderSecurityContent();
-    }
-
-    private async Task DoEnrollUnlock()
-    {
-        if (!S.PasswordEnabled) return;
-        if (_securityBody != null)
-            foreach (var c in _securityBody.Children.OfType<Button>()) c.IsEnabled = false;
-        if (_faceHint != null) { _faceHint.Text = "刷脸解锁录入中… 请正对摄像头保持静止（约 3 秒）"; _faceHint.IsVisible = true; }
-
-        bool ok = await _engine.EnrollUnlockAsync(12, (n) =>
-        {
-            Dispatcher.UIThread.Post(() => { if (_faceHint != null) _faceHint.Text = $"刷脸解锁录入中… 已采集 {n} 张人脸样本"; });
-        });
-
-        if (_faceHint != null)
-            _faceHint.Text = ok ? "✓ 刷脸解锁录入成功" : "✗ 录入失败：未采集到足够清晰的人脸，请重试";
-        S.Save();
-        RenderSecurityContent();
-        RefreshStatus();
-    }
-
-    private async Task DoEnrollUnlockFromPhoto()
-    {
-        if (!S.PasswordEnabled) return;
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "选择一张包含你正脸的人脸照片",
-            AllowMultiple = false,
-            FileTypeFilter = new[] { new FilePickerFileType("图片") { Patterns = new[] { "*.jpg", "*.jpeg", "*.png", "*.bmp" } } }
-        });
-        if (files == null || files.Count == 0) return;
-        var path = files[0].Path.LocalPath;
-        if (_securityBody != null)
-            foreach (var c in _securityBody.Children.OfType<Button>()) c.IsEnabled = false;
-        if (_faceHint != null) { _faceHint.Text = "照片录入中… 正在本地分析人脸特征"; _faceHint.IsVisible = true; }
-
-        bool ok = await _engine.EnrollUnlockFromPhotoAsync(path, (n) =>
-            Dispatcher.UIThread.Post(() => { if (_faceHint != null) _faceHint.Text = $"照片录入中… 已生成 {n} 个人脸特征样本"; }));
-
-        if (_faceHint != null)
-            _faceHint.Text = ok ? "✓ 刷脸解锁照片录入成功" : "✗ 未从照片中检测到清晰正脸，请换一张重新上传";
-        S.Save();
-        RenderSecurityContent();
-        RefreshStatus();
-    }
-
-    private void DoDisableFaceUnlock()
-    {
-        var cd = new ConfirmDialog("关闭刷脸解锁", "关闭后将无法再使用人脸代替密码验证，仅保留密码验证。确定关闭吗？", "关闭刷脸解锁", "取消");
-        cd.Closed += (_, _) =>
-        {
-            if (!cd.Confirmed) return;
-            _engine.ClearUnlock();
-            RenderSecurityContent();
-            RefreshStatus();
-        };
-        cd.ShowDialog(this);
     }
 
     private void BuildWhitelistSection()
