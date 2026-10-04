@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform;
+using PeekShield.Models;
 
 namespace PeekShield.Services;
 
@@ -11,6 +14,8 @@ public class TrayService
     private NativeMenuItem? _pauseItem;
     private NativeMenuItem? _manualItem;
     private string _baseTooltip = "PeekShield · 就绪";
+
+    public static TrayService? Instance { get; private set; }
 
     public event Action? OnTogglePause;
     public event Action? OnToggleManual;
@@ -22,6 +27,7 @@ public class TrayService
 
     public void Start()
     {
+        Instance = this;
         if (_tray != null) return;
         _tray = new TrayIcon
         {
@@ -30,35 +36,96 @@ public class TrayService
             IsVisible = true
         };
         _tray.Clicked += (_, _) => OnOpenSettings?.Invoke();
-
-        var menu = new NativeMenu();
-        var open = new NativeMenuItem("打开设置");
-        open.Click += (_, _) => OnOpenSettings?.Invoke();
-        var privacy = new NativeMenuItem("隐私与授权");
-        privacy.Click += (_, _) => OnPrivacy?.Invoke();
-        var security = new NativeMenuItem("安全设置");
-        security.Click += (_, _) => OnSecurity?.Invoke();
-        _pauseItem = new NativeMenuItem("暂停防护");
-        _pauseItem.Click += (_, _) => OnTogglePause?.Invoke();
-        _manualItem = new NativeMenuItem("手动防窥：关");
-        _manualItem.Click += (_, _) => OnToggleManual?.Invoke();
-        var hide = new NativeMenuItem("隐藏托盘图标（后台静默）");
-        hide.Click += (_, _) => OnHideTray?.Invoke();
-        var exit = new NativeMenuItem("退出");
-        exit.Click += (_, _) => OnExit?.Invoke();
-
-        menu.Items.Add(open);
-        menu.Items.Add(privacy);
-        menu.Items.Add(security);
-        menu.Items.Add(_pauseItem);
-        menu.Items.Add(_manualItem);
-        menu.Items.Add(hide);
-        menu.Items.Add(exit);
-        _tray.Menu = menu;
+        BuildMenu();
 
         var app = Application.Current;
         if (app != null) TrayIcon.SetIcons(app, new TrayIcons { _tray });
     }
+
+    public void RefreshMenu()
+    {
+        if (_tray == null) return;
+        BuildMenu();
+    }
+
+    private void BuildMenu()
+    {
+        if (_tray == null) return;
+        var settings = PeekShieldEngine.Instance?.Settings;
+        var configured = settings?.TrayMenuItems;
+        var itemList = (configured != null && configured.Count > 0)
+            ? configured.ToList()
+            : DefaultMenuItems();
+
+        var menu = new NativeMenu();
+        foreach (var item in itemList)
+        {
+            if (!item.Visible) continue;
+            var native = CreateNativeItem(item.Id);
+            if (native == null) continue;
+            menu.Items.Add(native);
+        }
+        _tray.Menu = menu;
+    }
+
+    private NativeMenuItem? CreateNativeItem(string id)
+    {
+        return id switch
+        {
+            "open" => CreateItem("打开设置", () => OnOpenSettings?.Invoke()),
+            "privacy" => CreateItem("隐私与授权", () => OnPrivacy?.Invoke()),
+            "security" => CreateItem("安全设置", () => OnSecurity?.Invoke()),
+            "pause" => CreatePauseItem(),
+            "manual" => CreateManualItem(),
+            "hide" => CreateItem("隐藏托盘图标（后台静默）", () => OnHideTray?.Invoke()),
+            "exit" => CreateItem("退出", () => OnExit?.Invoke()),
+            _ => null
+        };
+    }
+
+    private NativeMenuItem CreateItem(string header, Action action)
+    {
+        var item = new NativeMenuItem(header);
+        item.Click += (_, _) => action();
+        return item;
+    }
+
+    private NativeMenuItem CreatePauseItem()
+    {
+        _pauseItem = new NativeMenuItem("暂停防护");
+        _pauseItem.Click += (_, _) => OnTogglePause?.Invoke();
+        return _pauseItem;
+    }
+
+    private NativeMenuItem CreateManualItem()
+    {
+        _manualItem = new NativeMenuItem("手动防窥：关");
+        _manualItem.Click += (_, _) => OnToggleManual?.Invoke();
+        return _manualItem;
+    }
+
+    public static List<TrayMenuItemConfig> DefaultMenuItems() => new()
+    {
+        new() { Id = "open", Visible = true },
+        new() { Id = "privacy", Visible = true },
+        new() { Id = "security", Visible = true },
+        new() { Id = "pause", Visible = true },
+        new() { Id = "manual", Visible = true },
+        new() { Id = "hide", Visible = true },
+        new() { Id = "exit", Visible = true }
+    };
+
+    public static string MenuItemLabel(string id) => id switch
+    {
+        "open" => "打开设置",
+        "privacy" => "隐私与授权",
+        "security" => "安全设置",
+        "pause" => "暂停/恢复防护",
+        "manual" => "手动防窥开关",
+        "hide" => "隐藏托盘图标",
+        "exit" => "退出",
+        _ => id
+    };
 
     public void Show() { if (_tray != null) _tray.IsVisible = true; }
     public void Hide() { if (_tray != null) _tray.IsVisible = false; }

@@ -9,7 +9,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using PeekShield.Models;
@@ -25,10 +27,19 @@ public partial class MainWindow : Window
     private readonly PeekShieldEngine _engine = PeekShieldEngine.Instance;
     private PeekShieldSettings S => _engine.Settings;
 
-    private readonly StackPanel _root = new();
-    private ScrollViewer? _scroll;
+    private readonly Grid _mainLayout = new();
+    private readonly StackPanel _navPanel = new();
+    private readonly ScrollViewer _navScroll = new();
+    private readonly StackPanel _contentPanel = new();
+    private ScrollViewer? _contentScroll;
     private readonly List<ProtectedEntry> _procList = new();
     private readonly List<ProtectedEntry> _titleList = new();
+
+    private string _selectedNavId = "overview";
+    private readonly List<(string Id, string Label, string Icon, Action Build)> _navItems = new();
+    private readonly Dictionary<string, Border> _navButtonBorders = new();
+
+    private TextBlock? _contentTitle;
 
     private StackPanel? _wlHost;
     private TextBox? _wlInput;
@@ -53,6 +64,13 @@ public partial class MainWindow : Window
     private Button? _enrollBtn;
     private Button? _clearBtn;
     private Button? _photoBtn;
+    private Image? _enrollPreview;
+    private Action<OpenCvSharp.Mat>? _enrollPreviewHandler;
+    private bool _enrollPreviewBusy;
+    private Image? _wlPreview;
+    private Action<OpenCvSharp.Mat>? _wlPreviewHandler;
+    private bool _wlPreviewBusy;
+    private Dictionary<ThemeSkin, (Border Circle, TextBlock Check)> _skinMarks = new();
     private CheckBox? _enableSmartPeekCheck;
     private CheckBox? _pausedCheck;
     private CheckBox? _manualModeCheck;
@@ -65,7 +83,6 @@ public partial class MainWindow : Window
     private Grid? _lockHost;
     private StackPanel? _lockPanel;
     private StackPanel? _securityBody;
-    private Border? _securityCard;
     private bool _securityUnlocked;
     private bool _mainLocked;
     private bool _hidden;
@@ -88,14 +105,16 @@ public partial class MainWindow : Window
         }
         catch { }
 
-        _scroll = new ScrollViewer { Content = _root, Background = Palette.PageBg };
+        _contentScroll = new ScrollViewer { Content = _contentPanel, Background = Palette.PageBg };
         _lockHost = new Grid();
-        _lockHost.Children.Add(_scroll);
+        _lockHost.Children.Add(_mainLayout);
         _lockPanel = CreateOpenMainLockPanel();
         _lockHost.Children.Add(_lockPanel);
         _lockPanel.IsVisible = false;
         Content = _lockHost;
         Background = Palette.PageBg;
+
+        BuildLayout();
 
         Title = "窥屿盾—PeekShield";
         MinWidth = 640;
@@ -107,7 +126,6 @@ public partial class MainWindow : Window
 
         _engine.StatusChanged += OnStatus;
         _engine.SettingsChanged += OnSettingsChanged;
-        ThemeService.Changed += RebuildUi;
 
         if (NeedsOpenMainGate())
         {
@@ -117,7 +135,7 @@ public partial class MainWindow : Window
         else
         {
             _mainLocked = false;
-            Build();
+            BuildLayout();
         }
         RefreshStatus();
 
@@ -159,7 +177,7 @@ public partial class MainWindow : Window
             }
             if (r != PasswordWindow.Outcome.Ok) return;
             UnlockMainView();
-            Build();
+            BuildLayout();
             RefreshStatus();
         }
         if (S.PasswordEnabled && S.ProtectOpenSecurity && !IsSecurityUnlockedNow())
@@ -183,16 +201,212 @@ public partial class MainWindow : Window
 
     private void ScrollToSecurity()
     {
-        if (_securityCard != null)
-            _securityCard.BringIntoView();
+        SelectNav("security");
     }
 
-    private void Build()
+    private void BuildLayout()
     {
-        _root.Children.Clear();
-        _root.Spacing = 4;
-        _root.Margin = new Thickness(8);
+        _mainLayout.Children.Clear();
+        _mainLayout.ColumnDefinitions.Clear();
+        _mainLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        _mainLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
+        BuildNavPanel();
+        Grid.SetColumn(_navScroll, 0);
+        _mainLayout.Children.Add(_navScroll);
+
+        var contentHost = new Grid { Background = Palette.PageBg };
+        contentHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        contentHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        _contentTitle = new TextBlock
+        {
+            FontSize = 20,
+            FontWeight = FontWeight.Bold,
+            Foreground = Palette.TextPrimary,
+            Margin = new Thickness(20, 16, 20, 6)
+        };
+        Grid.SetRow(_contentTitle, 0);
+        contentHost.Children.Add(_contentTitle);
+
+        _contentScroll = new ScrollViewer
+        {
+            Content = _contentPanel,
+            Background = Palette.PageBg,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
+        };
+        _contentPanel.SetValue(TextBlock.ForegroundProperty, Palette.TextPrimary);
+        _contentPanel.Styles.Clear();
+        var textStyle = new Style(x => x.OfType<TextBlock>());
+        textStyle.Add(new Setter(TextBlock.ForegroundProperty, Palette.TextPrimary));
+        _contentPanel.Styles.Add(textStyle);
+        Grid.SetRow(_contentScroll, 1);
+        contentHost.Children.Add(_contentScroll);
+
+        Grid.SetColumn(contentHost, 1);
+        _mainLayout.Children.Add(contentHost);
+
+        BuildNavItems();
+        SelectNav(_selectedNavId);
+    }
+
+    private void BuildNavPanel()
+    {
+        _navPanel.Children.Clear();
+        _navPanel.Background = Palette.PageBg;
+        _navPanel.Spacing = 4;
+        _navPanel.Margin = new Thickness(0);
+
+        var header = new StackPanel { Spacing = 6, Margin = new Thickness(16, 16, 16, 12) };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        try
+        {
+            using var s = Avalonia.Platform.AssetLoader.Open(new Uri("avares://PeekShield/Resources/icon.png"));
+            var iconImg = new Image { Source = new Avalonia.Media.Imaging.Bitmap(s), Width = 22, Height = 22 };
+            titleRow.Children.Add(iconImg);
+        }
+        catch { }
+        titleRow.Children.Add(new TextBlock { Text = "应用设置", FontSize = 15, FontWeight = FontWeight.Bold, Foreground = Palette.TextPrimary, VerticalAlignment = VerticalAlignment.Center });
+        header.Children.Add(titleRow);
+        header.Children.Add(new TextBlock { Text = "v" + BuildConstants.Version, FontSize = 12, Foreground = Palette.TextMuted });
+        _navPanel.Children.Add(header);
+
+        _navScroll.Content = _navPanel;
+        _navScroll.Background = Palette.PageBg;
+        _navScroll.BorderBrush = Palette.Border;
+        _navScroll.BorderThickness = new Thickness(0, 0, 1, 0);
+    }
+
+    private void BuildNavItems()
+    {
+        _navItems.Clear();
+        _navItems.Add(("overview", "总览", "◈", BuildOverviewPage));
+        _navItems.Add(("enroll", "人脸录入", "◎", BuildEnrollPage));
+#if PEEKSHIELD_WHITELIST
+        _navItems.Add(("whitelist", "白名单", "☺", BuildWhitelistPage));
+#endif
+        _navItems.Add(("camera", "摄像头", "◉", BuildCameraPage));
+        _navItems.Add(("peek", "防窥设置", "🛡", BuildPeekPage));
+        _navItems.Add(("advanced", "高级", "⚙", BuildAdvancedPage));
+        _navItems.Add(("security", "安全", "🔒", BuildSecurityPage));
+        _navItems.Add(("tray", "托盘", "▣", BuildTrayPage));
+        _navItems.Add(("about", "关于", "ℹ", BuildAboutPage));
+
+        _navButtonBorders.Clear();
+        foreach (var item in _navItems)
+        {
+            var indicator = new Border
+            {
+                Width = 3,
+                CornerRadius = new CornerRadius(2),
+                Background = Brushes.Transparent,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Margin = new Thickness(0, 6, 0, 6)
+            };
+            var iconBlock = new TextBlock { Text = item.Icon, FontSize = 13, Foreground = Palette.TextMuted, VerticalAlignment = VerticalAlignment.Center, Width = 22 };
+            var labelBlock = new TextBlock { Text = item.Label, FontSize = 13, Foreground = Palette.TextPrimary, VerticalAlignment = VerticalAlignment.Center };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            row.Children.Add(iconBlock);
+            row.Children.Add(labelBlock);
+            var content = new Border
+            {
+                Background = Brushes.Transparent,
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 8),
+                Margin = new Thickness(4, 1, 8, 1),
+                Child = row,
+                Cursor = new Cursor(StandardCursorType.Hand)
+            };
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+            Grid.SetColumn(indicator, 0);
+            Grid.SetColumn(content, 1);
+            grid.Children.Add(indicator);
+            grid.Children.Add(content);
+            content.PointerPressed += (_, _) => SelectNav(item.Id);
+            content.PointerEntered += (_, _) => { if (_selectedNavId != item.Id) content.Background = Palette.ButtonBg; };
+            content.PointerExited += (_, _) => { if (_selectedNavId != item.Id) content.Background = Brushes.Transparent; };
+            _navPanel.Children.Add(grid);
+            _navButtonBorders[item.Id] = content;
+            content.Tag = (indicator, iconBlock, labelBlock);
+        }
+    }
+
+    private void SelectNav(string id)
+    {
+        if (_selectedNavId != id && _selectedNavId == "enroll")
+            UnsubscribeEnrollPreview();
+        if (_selectedNavId != id && _selectedNavId == "whitelist")
+            UnsubscribeWhitelistPreview();
+        _selectedNavId = id;
+        foreach (var kv in _navButtonBorders)
+        {
+            var selected = kv.Key == id;
+            var content = kv.Value;
+            content.Background = selected ? Palette.AccentBg : Brushes.Transparent;
+            if (content.Tag is ValueTuple<Border, TextBlock, TextBlock> tag)
+            {
+                tag.Item1.Background = selected ? Palette.Accent : Brushes.Transparent;
+                tag.Item2.Foreground = selected ? Palette.AccentFg : Palette.TextMuted;
+                tag.Item3.Foreground = selected ? Palette.AccentFg : Palette.TextPrimary;
+            }
+        }
+        var item = _navItems.FirstOrDefault(x => x.Id == id);
+        if (_contentTitle != null) _contentTitle.Text = item.Label;
+        _contentPanel.Children.Clear();
+        _contentPanel.Spacing = 4;
+        _contentPanel.Margin = new Thickness(8, 4, 8, 12);
+        item.Build();
+    }
+
+    private void UnsubscribeEnrollPreview()
+    {
+        if (_enrollPreviewHandler != null)
+        {
+            _engine.PreviewFrame -= _enrollPreviewHandler;
+            _enrollPreviewHandler = null;
+        }
+        _enrollPreview = null;
+        _engine.ReleasePreviewRef();
+    }
+
+    private void OnEnrollPreviewFrame(OpenCvSharp.Mat mat)
+    {
+        if (_enrollPreview == null || mat == null || mat.Empty()) { mat?.Dispose(); return; }
+        if (_enrollPreviewBusy) { mat.Dispose(); return; }
+        _enrollPreviewBusy = true;
+        // 在后台线程做 PNG 编码，避免阻塞 UI 线程；loop 给的 clone 由 handler 负责 dispose。
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var bytes = mat.ToBytes(".png");
+                mat.Dispose();
+                if (bytes == null || bytes.Length == 0) { _enrollPreviewBusy = false; return; }
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        if (_enrollPreview == null) return;
+                        using var ms = new MemoryStream(bytes);
+                        var old = _enrollPreview.Source as IDisposable;
+                        _enrollPreview.Source = new Bitmap(ms);
+                        old?.Dispose();
+                    }
+                    catch { }
+                    finally { _enrollPreviewBusy = false; }
+                });
+            }
+            catch
+            {
+                mat.Dispose();
+                _enrollPreviewBusy = false;
+            }
+        });
+    }
+
+    private void BuildOverviewPage()
+    {
         _statusText = new TextBlock
         {
             FontSize = 15,
@@ -200,37 +414,245 @@ public partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(10, 10, 10, 4)
         };
-        _root.Children.Add(_statusText);
+        _contentPanel.Children.Add(_statusText);
+        RefreshStatus();
 
-        BuildAppearanceSection();
-        BuildEnrollSection();
-#if PEEKSHIELD_WHITELIST
-        BuildWhitelistSection();
-#endif
-        BuildCameraSection();
+        var global = AddCard("总控");
+        global.Children.Add(MakeCheck("开机自动启动", S.AutoStart, v => { S.AutoStart = v; Commit(); }));
+        global.Children.Add(MakeCheck("显示托盘图标（关闭后完全后台静默）", S.ShowTrayIcon, v => { S.ShowTrayIcon = v; Commit(); }));
+        _enableSmartPeekCheck = MakeCheck("智能防窥总开关", S.EnableSmartPeek, v => { S.EnableSmartPeek = v; Commit(); });
+        _pausedCheck = MakeCheck("暂停全部防护", S.Paused, v => { S.Paused = v; Commit(); });
+        _manualModeCheck = MakeCheck("手动固定防窥（侧面视角变暗模糊，按 Esc 退出）", S.ManualMode, v => { S.ManualMode = v; Commit(); });
+        global.Children.Add(_enableSmartPeekCheck);
+        global.Children.Add(_pausedCheck);
+        global.Children.Add(_manualModeCheck);
+
+        var appearance = AddCard("外观");
+        var themeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        _themeComboBox = new ComboBox { Width = 200, Margin = new Thickness(0, 4, 0, 0) };
+        _themeComboBox.Items.Add("跟随系统");
+        _themeComboBox.Items.Add("明亮");
+        _themeComboBox.Items.Add("深色");
+        _themeComboBox.SelectedIndex = S.ThemeMode == ThemeMode.Light ? 1 : S.ThemeMode == ThemeMode.Dark ? 2 : 0;
+        _themeComboBox.SelectionChanged += (_, _) =>
+        {
+            var m = _themeComboBox.SelectedIndex switch { 1 => ThemeMode.Light, 2 => ThemeMode.Dark, _ => ThemeMode.System };
+            S.ThemeMode = m; S.Save(); ThemeService.SetMode(m);
+        };
+        themeRow.Children.Add(_themeComboBox);
+        appearance.Children.Add(themeRow);
+        appearance.Children.Add(new TextBlock { FontSize = 12, Foreground = Palette.TextMuted, Margin = new Thickness(0, 4, 0, 0), Text = "默认跟随系统外观，可手动固定为明亮或深色。" });
+
+        appearance.Children.Add(new TextBlock { Text = "主题皮肤", FontSize = 13, FontWeight = FontWeight.SemiBold, Foreground = Palette.TextSecondary, Margin = new Thickness(0, 12, 0, 4) });
+        var skinWrap = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+        _skinMarks.Clear();
+        foreach (var def in SkinDef.All)
+        {
+            var isSel = def.Skin == S.Skin;
+            var circle = new Border
+            {
+                Width = 30,
+                Height = 30,
+                CornerRadius = new CornerRadius(15),
+                Background = Brush.Parse(def.Preview),
+                BorderThickness = new Thickness(isSel ? 3 : 1),
+                BorderBrush = isSel ? Palette.TextPrimary : Palette.Border
+            };
+            var check = new TextBlock
+            {
+                Text = "✓",
+                Foreground = Brushes.White,
+                FontSize = 16,
+                FontWeight = FontWeight.Bold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsVisible = isSel
+            };
+            var cell = new Grid { Width = 34, Height = 34, Margin = new Thickness(2) };
+            cell.Children.Add(circle);
+            cell.Children.Add(check);
+            var btn = new Button
+            {
+                Content = cell,
+                Padding = new Thickness(0),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(18),
+                Cursor = new Cursor(StandardCursorType.Hand)
+            };
+            ToolTip.SetTip(btn, def.Name);
+            var captured = def;
+            btn.Click += (_, _) =>
+            {
+                if (S.Skin == captured.Skin) return;
+                S.Skin = captured.Skin;
+                S.Save();
+                ThemeService.SetSkin(captured.Skin);
+                RefreshSkinSelection();
+            };
+            skinWrap.Children.Add(btn);
+            _skinMarks[def.Skin] = (circle, check);
+        }
+        appearance.Children.Add(skinWrap);
+        appearance.Children.Add(new TextBlock { FontSize = 12, Foreground = Palette.TextMuted, Margin = new Thickness(0, 4, 0, 0), Text = "点击色块即可切换皮肤，强调色会即时应用到本界面与弹窗。" });
+
+        var exitCard = AddCard("退出");
+        exitCard.Children.Add(new TextBlock { Text = "关闭窗口会最小化到系统托盘后台运行；如需完全退出请点下方按钮。", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
+        var exitRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        exitRow.Children.Add(MakeButton("退出程序", (_) => App.RequestExit(), Palette.Danger));
+        exitCard.Children.Add(exitRow);
+    }
+
+    private void RefreshSkinSelection()
+    {
+        foreach (var kv in _skinMarks)
+        {
+            var isSel = kv.Key == S.Skin;
+            kv.Value.Circle.BorderThickness = new Thickness(isSel ? 3 : 1);
+            kv.Value.Circle.BorderBrush = isSel ? Palette.TextPrimary : Palette.Border;
+            kv.Value.Check.IsVisible = isSel;
+        }
+    }
+
+    private void BuildEnrollPage() { BuildEnrollSection(); }
+    private void BuildWhitelistPage() { BuildWhitelistSection(); }
+    private void BuildCameraPage() { BuildCameraSection(); }
+
+    private void BuildPeekPage()
+    {
         BuildSensitivitySection();
         BuildActionsSection();
         BuildProtectSection();
         BuildSuppressSection();
+    }
+
+    private void BuildAdvancedPage()
+    {
         BuildAdvancedSection();
-        BuildGlobalSection();
+    }
+
+    private void BuildSecurityPage()
+    {
+        _securityBody = _contentPanel;
+        RenderSecurityContent();
+    }
+
+    private void BuildPrivacyPage() { BuildPrivacySection(); }
+    private void BuildUpdatePage() { BuildUpdateSection(); }
+
+    private void BuildTrayPage()
+    {
+        var body = AddCard("托盘右键菜单");
+        body.Children.Add(new TextBlock { Text = "选择要在系统托盘右键菜单中显示的条目（拖拽可排序）。", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) });
+        var list = new StackPanel { Spacing = 4 };
+        body.Children.Add(list);
+        var items = S.TrayMenuItems?.Count > 0 ? S.TrayMenuItems : TrayService.DefaultMenuItems();
+        var working = items.Select(x => new TrayMenuItemConfig { Id = x.Id, Visible = x.Visible }).ToList();
+        var allIds = TrayService.DefaultMenuItems().Select(x => x.Id).ToList();
+        foreach (var id in allIds.Where(x => !working.Any(w => w.Id == x))) working.Add(new TrayMenuItemConfig { Id = id, Visible = true });
+
+        void Rebuild()
+        {
+            list.Children.Clear();
+            for (int i = 0; i < working.Count; i++)
+            {
+                var idx = i;
+                var item = working[i];
+                var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                var cb = new CheckBox { IsChecked = item.Visible, VerticalAlignment = VerticalAlignment.Center };
+                cb.IsCheckedChanged += (_, _) => { item.Visible = cb.IsChecked == true; };
+                Grid.SetColumn(cb, 0);
+
+                var name = new TextBlock { Text = TrayService.MenuItemLabel(item.Id), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), Foreground = Palette.TextPrimary };
+                Grid.SetColumn(name, 1);
+
+                var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+                btnRow.Children.Add(MakeMiniButton("↑", () => { if (idx > 0) { (working[idx], working[idx - 1]) = (working[idx - 1], working[idx]); Rebuild(); } }));
+                btnRow.Children.Add(MakeMiniButton("↓", () => { if (idx < working.Count - 1) { (working[idx], working[idx + 1]) = (working[idx + 1], working[idx]); Rebuild(); } }));
+                Grid.SetColumn(btnRow, 2);
+
+                row.Children.Add(cb); row.Children.Add(name); row.Children.Add(btnRow);
+                list.Children.Add(row);
+            }
+        }
+        Rebuild();
+        body.Children.Add(MakeButton("保存并应用", (_) => { S.TrayMenuItems = working.ToList(); S.Save(); TrayService.Instance?.RefreshMenu(); }));
+    }
+
+    private void BuildAboutPage()
+    {
+        var hero = new StackPanel { Spacing = 10, Margin = new Thickness(10, 10, 10, 4) };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        try
+        {
+            using var s = Avalonia.Platform.AssetLoader.Open(new Uri("avares://PeekShield/Resources/icon.png"));
+            titleRow.Children.Add(new Image { Source = new Avalonia.Media.Imaging.Bitmap(s), Width = 48, Height = 48 });
+        }
+        catch { }
+        var titleStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        titleStack.Children.Add(new TextBlock { Text = BuildConstants.AppNameZh, FontSize = 24, FontWeight = FontWeight.Bold, Foreground = Palette.TextPrimary });
+        titleStack.Children.Add(new TextBlock { Text = "本地离线隐私防窥工具", FontSize = 13, Foreground = Palette.TextSecondary });
+        titleRow.Children.Add(titleStack);
+        hero.Children.Add(titleRow);
+        hero.Children.Add(new TextBlock { Text = "一款通过本机摄像头实时检测人脸、智能识别偷窥行为并自动触发雾化遮罩与告警的桌面隐私保护工具。", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
+        _contentPanel.Children.Add(hero);
+
+        var card = new Border
+        {
+            Background = Palette.CardBg,
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(18),
+            Margin = new Thickness(6, 4, 6, 4)
+        };
+        var stack = new StackPanel { Spacing = 12 };
+        var infoRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        try
+        {
+            using var s2 = Avalonia.Platform.AssetLoader.Open(new Uri("avares://PeekShield/Resources/icon.png"));
+            infoRow.Children.Add(new Border { Width = 44, Height = 44, CornerRadius = new CornerRadius(10), Background = Palette.AccentBg, Child = new Image { Source = new Avalonia.Media.Imaging.Bitmap(s2), Width = 32, Height = 32, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
+        }
+        catch { }
+        var infoStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        infoStack.Children.Add(new TextBlock { Text = BuildConstants.AppName, FontSize = 16, FontWeight = FontWeight.Bold, Foreground = Palette.TextPrimary });
+        infoStack.Children.Add(new TextBlock { Text = "v" + BuildConstants.Version, FontSize = 13, Foreground = Palette.TextSecondary });
+        infoRow.Children.Add(infoStack);
+        var expand = new TextBlock { Text = "⌃", FontSize = 14, Foreground = Palette.TextMuted, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+        infoRow.Children.Add(expand);
+        stack.Children.Add(infoRow);
+
+        stack.Children.Add(new TextBlock { Text = "Copyright © yty16\n本项目基于 GNU General Public License v3.0 获得许可。", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
+        var linkRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        linkRow.Children.Add(MakeLink("项目主页", BuildConstants.GitHubRepoUrl));
+        linkRow.Children.Add(MakeLink("帮助文档", BuildConstants.GitHubRepoUrl + "/blob/main/README.md"));
+        linkRow.Children.Add(MakeLink("GitHub", BuildConstants.GitHubRepoUrl));
+        linkRow.Children.Add(MakeLink("问题反馈", BuildConstants.GitHubIssuesUrl));
+        stack.Children.Add(linkRow);
+        card.Child = stack;
+        _contentPanel.Children.Add(card);
+
+        var helpCard = AddCard("遇到问题？");
+        helpCard.Children.Add(new TextBlock { Text = "若在使用过程中遇到异常、崩溃或功能疑问，可通过 GitHub Issues 提交反馈，或查看 README.md 与 PRIVACY.md 获取更多信息。", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap });
+        helpCard.Children.Add(MakeButton("打开 GitHub Issues", (_) => OpenUrl(BuildConstants.GitHubIssuesUrl)));
+
         BuildUpdateSection();
         BuildPrivacySection();
-        BuildSecuritySection();
+    }
 
-        var exitCard = AddCard("退出");
-        var exitNote = new TextBlock
+    private TextBlock MakeLink(string text, string url)
+    {
+        var tb = new TextBlock
         {
-            Text = "关闭窗口会最小化到系统托盘后台运行；如需完全退出请点下方按钮。",
+            Text = text,
             FontSize = 12,
-            Foreground = Palette.TextMuted,
-            TextWrapping = TextWrapping.Wrap
+            Foreground = new SolidColorBrush(ThemeService.IsDark ? Color.Parse("#60A5FA") : Color.Parse("#2563EB")),
+            Cursor = new Cursor(StandardCursorType.Hand)
         };
-        var exitBtn = MakeButton("退出程序", (_) => App.RequestExit(), Palette.Danger);
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
-        row.Children.Add(exitBtn);
-        exitCard.Children.Add(exitNote);
-        exitCard.Children.Add(row);
+        tb.PointerPressed += (_, _) => OpenUrl(url);
+        return tb;
     }
 
     private StackPanel AddCard(string title)
@@ -248,12 +670,14 @@ public partial class MainWindow : Window
         var card = new Border
         {
             Background = Palette.CardBg,
+            BorderBrush = Palette.Border,
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(14),
             Margin = new Thickness(6, 4, 6, 4),
             Child = inner
         };
-        _root.Children.Add(card);
+        _contentPanel.Children.Add(card);
         return body;
     }
 
@@ -286,7 +710,26 @@ public partial class MainWindow : Window
 
     private void BuildEnrollSection()
     {
+        UnsubscribeEnrollPreview();
+        _engine.AddPreviewRef();
+
         var body = AddCard("人脸录入（本地存储，禁止上传）");
+
+        _enrollPreview = new Image { Stretch = Stretch.Uniform };
+        var previewBorder = new Border
+        {
+            Width = 320,
+            Height = 240,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Background = Palette.CardBg,
+            CornerRadius = new CornerRadius(8),
+            Child = _enrollPreview
+        };
+        body.Children.Add(previewBorder);
+
+        _enrollPreviewHandler = OnEnrollPreviewFrame;
+        _engine.PreviewFrame += _enrollPreviewHandler;
+
         _enrollHint = new TextBlock
         {
             FontSize = 12,
@@ -435,7 +878,9 @@ public partial class MainWindow : Window
             Width = 480,
             MaxLength = 120,
             Watermark = PeekShieldSettings.DefaultPeekAlertText,
-            VerticalContentAlignment = VerticalAlignment.Center
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Foreground = Palette.TextPrimary,
+            Background = Palette.CardBg
         };
         alertBox.TextChanged += (_, _) => { S.PeekAlertText = alertBox.Text; S.Save(); };
         alertRow.Children.Add(alertBox);
@@ -550,7 +995,7 @@ public partial class MainWindow : Window
         RebuildProcList();
 
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
-        _procInput = new TextBox { Width = 220, Watermark = "例如 WeChat.exe" };
+        _procInput = new TextBox { Width = 220, Watermark = "例如 WeChat.exe", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
         var addBtn = MakeButton("添加", (_) =>
         {
             var t = (_procInput!.Text ?? string.Empty).Trim();
@@ -594,7 +1039,7 @@ public partial class MainWindow : Window
         RebuildTitleList();
 
         var tRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
-        _titleInput = new TextBox { Width = 220, Watermark = "例如 桌面 / 下载 / 私人" };
+        _titleInput = new TextBox { Width = 220, Watermark = "例如 桌面 / 下载 / 私人", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
         var tAdd = MakeButton("添加", (_) =>
         {
             var t = (_titleInput!.Text ?? string.Empty).Trim();
@@ -695,10 +1140,10 @@ public partial class MainWindow : Window
         body.Children.Add(MakeCheck("启用快捷键一键开关智能防窥", S.EnableHotkey, v => { S.EnableHotkey = v; Commit(); }));
         var hkRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
         hkRow.Children.Add(new TextBlock { Text = "修饰键", VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
-        _hkModBox = new TextBox { Text = S.HotkeyModifiers, Width = 120 };
+        _hkModBox = new TextBox { Text = S.HotkeyModifiers, Width = 120, Foreground = Palette.TextPrimary, Background = Palette.CardBg };
         hkRow.Children.Add(_hkModBox);
         hkRow.Children.Add(new TextBlock { Text = "主键", VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
-        _hkKeyBox = new TextBox { Text = S.HotkeyKey, Width = 80 };
+        _hkKeyBox = new TextBox { Text = S.HotkeyKey, Width = 80, Foreground = Palette.TextPrimary, Background = Palette.CardBg };
         hkRow.Children.Add(_hkKeyBox);
         var hkApply = MakeButton("应用快捷键", (_) =>
         {
@@ -793,7 +1238,7 @@ public partial class MainWindow : Window
 
     private CheckBox MakeCheck(string label, bool initial, Action<bool> onChange)
     {
-        var cb = new CheckBox { Content = label, IsChecked = initial, Margin = new Thickness(0, 2, 0, 2) };
+        var cb = new CheckBox { Content = label, IsChecked = initial, Margin = new Thickness(0, 2, 0, 2), Foreground = Palette.TextPrimary };
         cb.IsCheckedChanged += (_, _) => { if (!_updatingUi) onChange(cb.IsChecked == true); };
         return cb;
     }
@@ -1005,18 +1450,6 @@ public partial class MainWindow : Window
     }
 
     private void Commit() => _engine.ApplySettings();
-
-    private void RebuildUi()
-    {
-        Dispatcher.UIThread.Post(() =>
-        {
-            Background = Palette.PageBg;
-            if (_scroll != null) _scroll.Background = Palette.PageBg;
-            _root.Children.Clear();
-            Build();
-            RefreshStatus();
-        });
-    }
 
     private void OnStatus(EngineStatus st) => Dispatcher.UIThread.Post(RefreshStatus);
 
@@ -1279,7 +1712,7 @@ public partial class MainWindow : Window
 
     private void ShowOpenMainLockPanel()
     {
-        if (_scroll != null) _scroll.IsVisible = false;
+        if (_mainLayout != null) _mainLayout.IsVisible = false;
         if (_lockPanel != null) _lockPanel.IsVisible = true;
     }
 
@@ -1287,7 +1720,7 @@ public partial class MainWindow : Window
     {
         _mainLocked = false;
         if (_lockPanel != null) _lockPanel.IsVisible = false;
-        if (_scroll != null) _scroll.IsVisible = true;
+        if (_mainLayout != null) _mainLayout.IsVisible = true;
     }
 
     private void HandlePasswordRecovery()
@@ -1296,7 +1729,7 @@ public partial class MainWindow : Window
         SecurityService.ResetSession();
         _securityUnlocked = false;
         UnlockMainView();
-        Build();
+        BuildLayout();
         RefreshStatus();
         var info = new InfoDialog("密码保护已关闭", "密码保护已关闭，请重新设置密码。", "去设置");
         info.Closed += (_, _) => OpenSetPassword("设置密码");
@@ -1316,7 +1749,7 @@ public partial class MainWindow : Window
             try
             {
                 UnlockMainView();
-                Build();
+                BuildLayout();
                 RefreshStatus();
             }
             catch (Exception ex)
@@ -1326,28 +1759,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private void BuildSecuritySection()
-    {
-        var body = AddCard("安全设置");
-        _securityBody = body;
-        _securityCard = FindCard(body);
-        RenderSecurityContent();
-    }
-
-    private static Border? FindCard(StackPanel body)
-    {
-        var parent = body.Parent;
-        while (parent != null)
-        {
-            if (parent is Border b) return b;
-            parent = parent.Parent;
-        }
-        return null;
-    }
-
     private void RenderSecurityContent()
     {
         if (_securityBody == null) return;
+        if (_selectedNavId != "security") return;
         _securityBody.Children.Clear();
         _securityRenderedUnlocked = false;
         var s = S;
@@ -1435,13 +1850,7 @@ public partial class MainWindow : Window
         cd.Closed += (_, _) =>
         {
             if (!cd.Confirmed) return;
-            S.PasswordEnabled = false;
-            S.PasswordHash = "";
-            S.SecurityQuestion = "";
-            S.SecurityAnswerHash = "";
-            S.ProtectExit = S.ProtectUninstall = S.ProtectOpenMain = S.ProtectOpenSecurity = false;
-            S.ProcessGuardEnabled = false;
-            S.Save();
+            S.ClearPasswordProtection();
             GuardianService.Stop();
             _engine.ClearAllFaceAuth();
             _securityUnlocked = false;
@@ -1583,12 +1992,12 @@ public partial class MainWindow : Window
         });
         body.Children.Add(new TextBlock
         {
-            Text = "开启后，若软件进程被强制结束（如任务管理器结束任务），守护进程将立即强制重启并锁屏，防止他人通过关闭软件绕过防窥保护。本保护只针对外部强制结束，不处理软件自身崩溃（软件崩溃由「高级选项」中的崩溃后处理方式接管）。需先设置密码。",
+            Text = "守护进程始终在后台运行。本开关仅控制「进程被强制结束时是否锁定屏幕」--开启后可防止他人通过任务管理器等强制结束软件来绕过安全验证。需先设置密码。",
             FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 6)
         });
 
-        var cb = MakeCheck("启用进程保护（被杀自动重启）", S.ProcessGuardEnabled, v => DoToggleProcessGuard(v));
+        var cb = MakeCheck("进程被强制结束时锁定屏幕（防绕过安全）", S.ProcessGuardEnabled, v => DoToggleProcessGuard(v));
         body.Children.Add(cb);
 
         _guardHint = new TextBlock
@@ -1601,12 +2010,13 @@ public partial class MainWindow : Window
 
     private void DoToggleProcessGuard(bool on)
     {
+        // 注意：看门狗守护进程（崩溃恢复）始终运行，与「进程保护」开关无关；
+        // 本开关只控制「进程被强制结束时是否锁屏」这一防绕过安全行为。关闭它不会卸载守护进程。
         if (!on)
         {
             S.ProcessGuardEnabled = false;
             S.Save();
-            GuardianService.Stop();
-            if (_guardHint != null) { _guardHint.Text = "已关闭进程保护。"; _guardHint.IsVisible = true; }
+            if (_guardHint != null) { _guardHint.Text = "已关闭进程保护：被强制结束不再锁屏，但软件崩溃仍会自动恢复。"; _guardHint.IsVisible = true; }
             RenderSecurityContent();
             return;
         }
@@ -1614,14 +2024,14 @@ public partial class MainWindow : Window
         {
             S.ProcessGuardEnabled = false;
             S.Save();
-            if (_guardHint != null) { _guardHint.Text = "需先设置密码后才能启用进程保护。"; _guardHint.IsVisible = true; }
+            if (_guardHint != null) { _guardHint.Text = "需先设置密码后才能启用进程保护（锁屏防绕过）。"; _guardHint.IsVisible = true; }
             RenderSecurityContent();
             return;
         }
         S.ProcessGuardEnabled = true;
         S.Save();
         GuardianService.Sync();
-        if (_guardHint != null) { _guardHint.Text = "✓ 已启用进程保护，进程被强制结束将自动重启。"; _guardHint.IsVisible = true; }
+        if (_guardHint != null) { _guardHint.Text = "✓ 已启用进程保护：进程被强制结束将自动重启并锁屏，防止绕过安全验证。"; _guardHint.IsVisible = true; }
         RenderSecurityContent();
     }
 
@@ -1649,7 +2059,7 @@ public partial class MainWindow : Window
         RebuildWhitelistList();
 
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
-        _wlInput = new TextBox { Width = 220, Watermark = "白名单姓名（如 家人A）" };
+        _wlInput = new TextBox { Width = 220, Watermark = "白名单姓名（如 家人A）", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
         _wlAddBtn = MakeButton("添加白名单", (_) =>
         {
             var t = (_wlInput!.Text ?? string.Empty).Trim();
@@ -1674,6 +2084,32 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 4, 0, 0)
         };
         body.Children.Add(_wlHint);
+
+        _wlPreview = new Image { Width = 320, Height = 240, Stretch = Stretch.Uniform, IsVisible = false };
+        var wlPreviewBorder = new Border
+        {
+            Width = 320,
+            Height = 240,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Background = Palette.CardBg,
+            CornerRadius = new CornerRadius(8),
+            Child = _wlPreview,
+            IsVisible = false
+        };
+        _wlPreviewBorder = wlPreviewBorder;
+        body.Children.Add(wlPreviewBorder);
+    }
+
+    private Border? _wlPreviewBorder;
+
+    private void UnsubscribeWhitelistPreview()
+    {
+        if (_wlPreviewHandler != null)
+        {
+            _engine.PreviewFrame -= _wlPreviewHandler;
+            _wlPreviewHandler = null;
+        }
+        _engine.ReleasePreviewRef();
     }
 
     private void RebuildWhitelistList()
@@ -1708,7 +2144,7 @@ public partial class MainWindow : Window
         cb.IsCheckedChanged += (_, _) => { entry.Enabled = cb.IsChecked == true; S.Save(); };
         Grid.SetColumn(cb, 0);
 
-        var nameBox = new TextBox { Text = entry.Name, VerticalAlignment = VerticalAlignment.Center, Watermark = "白名单姓名" };
+        var nameBox = new TextBox { Text = entry.Name, VerticalAlignment = VerticalAlignment.Center, Watermark = "白名单姓名", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
         nameBox.TextChanged += (_, _) => _engine.RenameWhitelist(entry.Id, nameBox.Text.Trim());
         Grid.SetColumn(nameBox, 1);
 
@@ -1751,12 +2187,65 @@ public partial class MainWindow : Window
         if (_wlBusy) return;
         _wlBusy = true;
         if (_wlAddBtn != null) _wlAddBtn.IsEnabled = false;
+        ShowWhitelistPreview();
         UpdateWhitelistHint("录入中… 请正对摄像头保持静止（约 3 秒）");
         bool ok = await _engine.EnrollWhitelistAsync(id, 12, (n) => UpdateWhitelistHint($"已采集 {n} 张人脸样本…"));
+        HideWhitelistPreview();
         UpdateWhitelistHint(ok ? "✓ 白名单录入成功" : "✗ 录入失败：未采集到足够清晰的人脸，请重试");
         RebuildWhitelistList();
         if (_wlAddBtn != null) _wlAddBtn.IsEnabled = S.WhitelistEnabled;
         _wlBusy = false;
+    }
+
+    private void ShowWhitelistPreview()
+    {
+        UnsubscribeWhitelistPreview();
+        if (_wlPreviewBorder != null) _wlPreviewBorder.IsVisible = true;
+        if (_wlPreview != null) _wlPreview.IsVisible = true;
+        _wlPreviewHandler = OnWhitelistPreviewFrame;
+        _engine.AddPreviewRef();
+        _engine.PreviewFrame += _wlPreviewHandler;
+    }
+
+    private void HideWhitelistPreview()
+    {
+        UnsubscribeWhitelistPreview();
+        if (_wlPreviewBorder != null) _wlPreviewBorder.IsVisible = false;
+        if (_wlPreview != null) _wlPreview.IsVisible = false;
+    }
+
+    private void OnWhitelistPreviewFrame(OpenCvSharp.Mat mat)
+    {
+        if (_wlPreview == null || mat == null || mat.Empty()) { mat?.Dispose(); return; }
+        if (_wlPreviewBusy) { mat.Dispose(); return; }
+        _wlPreviewBusy = true;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var bytes = mat.ToBytes(".png");
+                mat.Dispose();
+                if (bytes == null || bytes.Length == 0) { _wlPreviewBusy = false; return; }
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        if (_wlPreview == null) return;
+                        using var ms = new MemoryStream(bytes);
+                        var old = _wlPreview.Source as IDisposable;
+                        _wlPreview.Source = new Bitmap(ms);
+                        old?.Dispose();
+                    }
+                    catch { }
+                    finally { _wlPreviewBusy = false; }
+                });
+            }
+            catch
+            {
+                mat.Dispose();
+                _wlPreviewBusy = false;
+            }
+        });
     }
 
     private async Task DoEnrollWhitelistPhoto(string id)

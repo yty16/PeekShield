@@ -75,7 +75,7 @@ public partial class App : Application
             if (Environment.GetCommandLineArgs().Contains("--crash-recover"))
             {
                 var crashSettings = PeekShieldSettings.Load();
-                ThemeService.Init(crashSettings.ThemeMode);
+                ThemeService.Init(crashSettings.ThemeMode, crashSettings.Skin);
                 ApplyTheme();
                 if (crashSettings.CrashBehaviorOnCrash == CrashBehavior.PromptRestart)
                 {
@@ -90,7 +90,7 @@ public partial class App : Application
             }
 
             PeekShieldEngine.Instance.Initialize();
-            ThemeService.Init(PeekShieldEngine.Instance.Settings.ThemeMode);
+            ThemeService.Init(PeekShieldEngine.Instance.Settings.ThemeMode, PeekShieldEngine.Instance.Settings.Skin);
             ApplyTheme();
 
             ContinueStartup(desktop);
@@ -161,20 +161,20 @@ public partial class App : Application
         {
             LoggerService.LogInfo("检测到已有主实例持有存活锁，本实例将作为次实例运行");
         }
+        // 每次正常启动都清除「优雅退出」标志并重新挂上看门狗：崩溃处理独立于进程保护，必须始终在线。
+        GuardianService.ClearGracefulShutdown();
         GuardianService.Sync();
         GuardianService.ClearCrashMarker();
         if (!Environment.GetCommandLineArgs().Contains("--crash-recover"))
             CrashReportService.Clear();
 
         var s = PeekShieldEngine.Instance.Settings;
-        if (s.PasswordEnabled && s.ProcessGuardEnabled)
+        // 看门狗健康检查始终运行（崩溃处理守护）；仅当开启「进程保护」时，被守护进程拉起的实例才锁屏（防绕过安全）。
+        StartGuardWatchdog();
+        if (s.ProcessGuardEnabled && Environment.GetCommandLineArgs().Contains("--guardian-launch"))
         {
-            if (Environment.GetCommandLineArgs().Contains("--guardian-launch"))
-            {
-                try { LoggerService.LogInfo("进程保护：因被杀被守护进程拉起，启动即锁屏"); } catch { }
-                GuardianService.TriggerPanic();
-            }
-            StartGuardWatchdog();
+            try { LoggerService.LogInfo("进程保护：因进程被结束被守护进程拉起，启动即锁屏"); } catch { }
+            GuardianService.TriggerPanic();
         }
 
         var main = new MainWindow();
@@ -416,7 +416,7 @@ public partial class App : Application
             return;
         }
 
-        try { ThemeService.Init(settings.ThemeMode); } catch { }
+        try { ThemeService.Init(settings.ThemeMode, settings.Skin); } catch { }
         try { ApplyTheme(); } catch { }
 
         var w = PasswordWindow.Create("Uninstall", "卸载验证",

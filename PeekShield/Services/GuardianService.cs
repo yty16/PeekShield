@@ -123,11 +123,14 @@ public static class GuardianService
 
     public static void Sync()
     {
-        var s = PeekShieldEngine.Instance.Settings;
-        if (s.PasswordEnabled && s.ProcessGuardEnabled && !IsGracefulShutdownRequested())
-            InstallDaemon();
-        else
+        // 崩溃处理独立于「进程保护」：无论是否开启进程保护，看门狗守护进程都必须运行，
+        // 以便在软件原生崩溃（托管层无法捕获）时自动恢复。仅在正常退出（已置优雅退出标志）时卸载。
+        if (IsGracefulShutdownRequested())
+        {
             Stop();
+            return;
+        }
+        InstallDaemon();
     }
 
     public static void Stop()
@@ -404,20 +407,50 @@ public static class GuardianService
             return;
         }
 
-        // 无标记死亡（外部强制结束 / 原生 AV）：最危险，会锁屏 + 反复拉起，受突发抑制保护以防死循环
+        // 无标记死亡：无法区分是强制结束、原生崩溃还是卡死被系统终止。
+        // 守护进程独立从磁盘读取用户设置（主实例单例可能未初始化或已损坏），并按用户选择的崩溃后行为处理。
+        // 默认「静默重启」保留原语义：自动重启，开启进程保护时锁屏防绕过。
+        CrashBehavior behavior;
+        bool lockOnKill;
+        try
+        {
+            var s = PeekShieldSettings.Load();
+            behavior = s.CrashBehaviorOnCrash;
+            lockOnKill = s.PasswordEnabled && s.ProcessGuardEnabled;
+        }
+        catch
+        {
+            behavior = CrashBehavior.SilentRestart;
+            lockOnKill = false;
+        }
+
+        if (behavior == CrashBehavior.PromptRestart)
+        {
+            try { LoggerService.LogInfo("进程保护：无标记终止，按「提示崩溃」设置拉起恢复提示"); } catch { }
+            WriteCrashMarker("prompt");
+            LaunchAppForRecovery();
+            return;
+        }
+        if (behavior == CrashBehavior.ExitApp)
+        {
+            try { LoggerService.LogInfo("进程保护：无标记终止，按「自动退出应用」设置不再重启"); } catch { }
+            return;
+        }
+
+        // SilentRestart（默认）= 与原进程保护兜底一致：自动重启，开启进程保护时锁屏。
         burstCrashes++;
-        try { LoggerService.LogInfo("进程保护：检测到主程序无标记终止（疑似被强制结束），准备锁屏并自动重启（累计=" + burstCrashes + "）"); } catch { }
+        try { LoggerService.LogInfo("进程保护：无标记终止（疑似被强制结束或原生崩溃），按静默重启处理（锁屏=" + lockOnKill + "，累计=" + burstCrashes + "）"); } catch { }
         if (burstCrashes >= 4)
         {
             if (!suppressed)
             {
                 suppressed = true;
-                try { LoggerService.LogInfo("进程保护：检测到主程序在短期内被反复强制结束（疑似被杀软/任务管理器干扰），已暂停自动拉起与锁屏以避免死循环；请手动启动应用。"); } catch { }
+                try { LoggerService.LogInfo("进程保护：检测到主程序在短期内被反复终止（疑似被杀软/任务管理器干扰或底层崩溃循环），已暂停自动拉起与锁屏以避免死循环；请手动启动应用。"); } catch { }
             }
             return;
         }
 
-        TriggerPanic();
+        if (lockOnKill) TriggerPanic();
         LaunchApp();
     }
 
@@ -460,9 +493,7 @@ public static class GuardianService
         {
             if (IsGracefulShutdownRequested()) return;
             if (IsGuardAlive()) return;
-            var s = PeekShieldEngine.Instance.Settings;
-            if (!(s.PasswordEnabled && s.ProcessGuardEnabled)) return;
-            LoggerService.LogInfo("进程保护：主程序检测到守护进程已退出，重新拉起守护");
+            LoggerService.LogInfo("进程保护：主程序检测到守护进程已退出，重新拉起守护（崩溃处理守护始终运行）");
         }
         catch { }
         _daemonInstalled = false;

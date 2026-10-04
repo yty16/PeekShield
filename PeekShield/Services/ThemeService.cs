@@ -14,19 +14,33 @@ public enum ThemeMode
     Dark
 }
 
+public enum ThemeSkin
+{
+    Blue,
+    Purple,
+    Green,
+    Orange,
+    Rose,
+    Teal,
+    Slate,
+    Pink
+}
+
 public static class ThemeService
 {
     public static ThemeMode Mode { get; private set; } = ThemeMode.System;
     public static bool IsDark { get; private set; }
+    public static ThemeSkin Skin { get; private set; } = ThemeSkin.Blue;
     public static event Action? Changed;
 
 #if !WINDOWS
     private static DispatcherTimer? _timer;
 #endif
 
-    public static void Init(ThemeMode mode)
+    public static void Init(ThemeMode mode, ThemeSkin skin = ThemeSkin.Blue)
     {
         Mode = mode;
+        Skin = skin;
         IsDark = Resolve(mode);
         StartWatcher();
     }
@@ -41,6 +55,13 @@ public static class ThemeService
             IsDark = dark;
             Changed?.Invoke();
         }
+    }
+
+    public static void SetSkin(ThemeSkin skin)
+    {
+        if (Skin == skin) return;
+        Skin = skin;
+        Changed?.Invoke();
     }
 
     private static bool Resolve(ThemeMode mode) =>

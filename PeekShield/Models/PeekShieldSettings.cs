@@ -98,6 +98,8 @@ public class PeekShieldSettings
 
     public ThemeMode ThemeMode { get; set; } = ThemeMode.System;
 
+    public ThemeSkin Skin { get; set; } = ThemeSkin.Blue;
+
     public bool EnableHotkey { get; set; } = true;
     public string HotkeyModifiers { get; set; } = "Ctrl+Shift";
     public string HotkeyKey { get; set; } = "P";
@@ -152,6 +154,8 @@ public class PeekShieldSettings
     public List<string> OpenSecurityAuthIds { get; set; } = new();
 
     public CrashBehavior CrashBehaviorOnCrash { get; set; } = CrashBehavior.SilentRestart;
+
+    public List<TrayMenuItemConfig> TrayMenuItems { get; set; } = new();
 
     public int SettingsVersion { get; set; } = 0;
 
@@ -395,6 +399,30 @@ public class PeekShieldSettings
             }
             changed = true;
         }
+        if (SettingsVersion < 14)
+        {
+            SettingsVersion = 14;
+            if (TrayMenuItems == null || TrayMenuItems.Count == 0)
+            {
+                TrayMenuItems = new List<TrayMenuItemConfig>
+                {
+                    new() { Id = "open", Visible = true },
+                    new() { Id = "privacy", Visible = true },
+                    new() { Id = "security", Visible = true },
+                    new() { Id = "pause", Visible = true },
+                    new() { Id = "manual", Visible = true },
+                    new() { Id = "hide", Visible = true },
+                    new() { Id = "exit", Visible = true }
+                };
+            }
+            changed = true;
+        }
+        if (SettingsVersion < 15)
+        {
+            SettingsVersion = 15;
+            if (!Enum.IsDefined(typeof(ThemeSkin), Skin)) Skin = ThemeSkin.Blue;
+            changed = true;
+        }
         if (changed) Save();
     }
 
@@ -617,4 +645,10 @@ public class ProtectedEntryListConverter : JsonConverter<List<ProtectedEntry>>
         }
         writer.WriteEndArray();
     }
+}
+
+public class TrayMenuItemConfig
+{
+    public string Id { get; set; } = "";
+    public bool Visible { get; set; } = true;
 }

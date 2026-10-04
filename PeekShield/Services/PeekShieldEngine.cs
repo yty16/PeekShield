@@ -36,6 +36,8 @@ public class PeekShieldEngine
     private HotkeyService? _escHotkey;
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
+    private readonly object _frameLock = new();
+    private Mat? _latestFrame;
 
     private bool _peekActive;
     private int _faceCount;
@@ -45,6 +47,7 @@ public class PeekShieldEngine
     private string _lastCameraErrorLog = "";
     private EngineStatus _status = EngineStatus.Idle;
     private string _cameraError = "";
+    private int _previewRefCount;
 
     private DateTime _lastStatusLog = DateTime.MinValue;
     private int _lastLoggedFaceCount = -1;
@@ -72,6 +75,7 @@ public class PeekShieldEngine
     public event Action? OpenSettingsRequested;
     public event Action? OpenSecurityRequested;
     public event Action? OpenPrivacyRequested;
+    public event Action<Mat>? PreviewFrame;
 
     public PeekShieldSettings Settings => _settings;
     public EngineStatus Status => _status;
@@ -218,6 +222,22 @@ public class PeekShieldEngine
         if (_verifier != null && _verifier.IsEnrolled) _ = EnsureFaceEngineAsync();
     }
 
+    public void AddPreviewRef()
+    {
+        Interlocked.Increment(ref _previewRefCount);
+        StartLoop();
+    }
+
+    public void ReleasePreviewRef()
+    {
+        if (Interlocked.Decrement(ref _previewRefCount) < 0) _previewRefCount = 0;
+        // 不再从 UI 线程同步 StopLoop：LoopAsync 自己会在下一轮检测到 !ShouldPreview && !ShouldMonitor
+        // 并安全关闭摄像头。彻底避免 SelectNav 切换页面时因 Wait(2000) 阻塞 UI 线程导致卡死。
+        // 需要立即释放摄像头的场景（RestartCamera/Dispose）会显式调用 StopLoop。
+    }
+
+    private bool ShouldPreview() => _previewRefCount > 0;
+
     public void StopLoop()
     {
         try { _cts?.Cancel(); } catch { }
@@ -226,12 +246,35 @@ public class PeekShieldEngine
         _cts?.Dispose();
         _cts = null;
         if (_camera.IsOpen) _camera.Close();
+        lock (_frameLock)
+        {
+            _latestFrame?.Dispose();
+            _latestFrame = null;
+        }
+    }
+
+    // 从主循环共享的最新帧取一份独立克隆（调用方负责 Dispose）。摄像头未就绪时返回 null。
+    private Mat? GrabFrame()
+    {
+        lock (_frameLock)
+        {
+            return _latestFrame == null || _latestFrame.Empty() ? null : _latestFrame.Clone();
+        }
+    }
+
+    // 录入/验证等需要摄像头采集的协程统一入口：由主循环持有摄像头（避免 Close+Open 抖动），
+    // 协程只从共享帧取图；返回时按是否需要监控决定是否停循环。
+    private void EndCameraSession()
+    {
+        if (_previewRefCount == 0) return;
+        ReleasePreviewRef();
     }
 
     public void RestartCamera()
     {
-        _camera.Close();
+        StopLoop();
         _loggedFrame = false;
+        if (ShouldMonitor() || ShouldPreview()) StartLoop();
     }
 
     public void SyncAutoStart()
@@ -252,8 +295,9 @@ public class PeekShieldEngine
             try
             {
                 if (_faceEngine == null || !_faceEngine.IsFaceReady) { await SafeDelay(1000, ct); continue; }
-                bool should = ShouldMonitor();
-                if (!should)
+                bool shouldMonitor = ShouldMonitor();
+                bool shouldPreview = ShouldPreview();
+                if (!shouldMonitor && !shouldPreview)
                 {
                     if (_camera.IsOpen) _camera.Close();
                     if (_peekActive) EndPeek();
@@ -308,6 +352,16 @@ public class PeekShieldEngine
                     continue;
                 }
                 _consecutiveBlackFrames = 0;
+                // 主循环是摄像头的唯一读取者。每帧把帧存入共享 _latestFrame（引擎持有、录入/验证协程从中取帧），
+                // 并克隆一份给预览。这样录入/验证不再 Close+Open 摄像头，避免部分驱动触发 videoio 原生 AV。
+                // 注意：_latestFrame 与预览帧必须是各自独立的克隆——预览 handler 会 dispose 自己的帧。
+                var shared = frame.Clone();
+                lock (_frameLock)
+                {
+                    _latestFrame?.Dispose();
+                    _latestFrame = shared;
+                }
+                PreviewFrame?.Invoke(frame.Clone());
 
                 if (!_loggedFrame)
                 {
@@ -315,22 +369,29 @@ public class PeekShieldEngine
                     _loggedFrame = true;
                 }
 
-                List<FaceInfo> faces = _faceEngine!.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter);
-                if (_settings.WhitelistEnabled && _whitelist != null)
+                if (shouldMonitor)
                 {
-                    double wth = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
-                    foreach (var f in faces)
+                    List<FaceInfo> faces = _faceEngine!.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter);
+                    if (_settings.WhitelistEnabled && _whitelist != null)
                     {
-                        if (f.IsOwner || f.Embedding.Length != FaceVerifier.Dim) continue;
-                        var nm = _whitelist.Match(f.Embedding, wth);
-                        if (nm != null) { f.IsWhitelisted = true; f.WhitelistName = nm; }
+                        double wth = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
+                        foreach (var f in faces)
+                        {
+                            if (f.IsOwner || f.Embedding.Length != FaceVerifier.Dim) continue;
+                            var nm = _whitelist.Match(f.Embedding, wth);
+                            if (nm != null) { f.IsWhitelisted = true; f.WhitelistName = nm; }
+                        }
                     }
-                }
-                _fg.RefreshForeground();
-                Evaluate(faces, frame);
+                    _fg.RefreshForeground();
+                    Evaluate(faces, frame);
 
-                int fps = faces.Count > 0 ? 12 : 2;
-                await SafeDelay(1000 / fps, ct);
+                    int fps = faces.Count > 0 ? 12 : 2;
+                    await SafeDelay(1000 / fps, ct);
+                }
+                else
+                {
+                    await SafeDelay(33, ct);
+                }
             }
             catch (Exception ex)
             {
@@ -689,11 +750,12 @@ public class PeekShieldEngine
     public async Task<bool> EnrollAsync(int samples = 10, Action<int>? progress = null)
     {
         if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
-        StopLoop();
+        AddPreviewRef();
         if (!await EnsureFaceEngineAsync())
         {
             _cameraError = "人脸识别模型加载失败，无法录入人脸";
             LoggerService.LogInfo("录入前模型按需加载失败");
+            EndCameraSession();
             return false;
         }
         bool wasEnrolled = _verifier!.IsEnrolled;
@@ -702,20 +764,14 @@ public class PeekShieldEngine
         var seen = new List<float[]>();
         try
         {
-            var cam = _camera;
-            if (!cam.Open(_settings.CameraIndex))
-            {
-                _cameraError = cam.LastError ?? "摄像头打开失败";
-                RestorePriorEnrollment(wasEnrolled);
-                return false;
-            }
-            using var frame = new Mat();
             int collected = 0;
             int attempts = 0;
             for (int i = 0; i < samples + 30 && collected < samples; i++)
             {
-                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
-                var faces = _recognizer!.Detect(frame);
+                Mat? snap = GrabFrame();
+                if (snap == null || snap.Empty()) { snap?.Dispose(); await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(snap);
+                snap.Dispose();
                 if (faces.Count == 0) { await SafeDelay(200, default); continue; }
                 attempts++;
                 var emb = faces[0].Embedding;
@@ -727,7 +783,6 @@ public class PeekShieldEngine
                 }
                 await SafeDelay(300, default);
             }
-            cam.Close();
             ok = collected >= 3;
             if (ok)
             {
@@ -751,7 +806,7 @@ public class PeekShieldEngine
         {
             ResetHistory();
             _settings.Save();
-            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+            ReleasePreviewRef();
             PushStatus(_settings.IsEnrolled ? EngineStatus.Monitoring : EngineStatus.NotEnrolled);
         }
         return ok;
@@ -789,7 +844,6 @@ public class PeekShieldEngine
     public async Task<bool> EnrollFromPhotoAsync(string imagePath, Action<int>? progress = null)
     {
         if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
-        StopLoop();
         if (!await EnsureFaceEngineAsync())
         {
             _cameraError = "人脸识别模型加载失败，无法录入人脸";
@@ -841,7 +895,6 @@ public class PeekShieldEngine
         {
             ResetHistory();
             _settings.Save();
-            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
             PushStatus(_settings.IsEnrolled ? EngineStatus.Monitoring : EngineStatus.NotEnrolled);
         }
         return ok;
@@ -867,11 +920,12 @@ public class PeekShieldEngine
         var entry = _settings.AuthMethods.FirstOrDefault(m => m.Id == id);
         if (entry?.Kind == AuthMethodKind.QuickFace) return IsEnrolled;
         if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
-        StopLoop();
+        AddPreviewRef();
         if (!await EnsureFaceEngineAsync())
         {
             _cameraError = "人脸识别模型加载失败，无法录入人脸";
             LoggerService.LogInfo("人脸认证录入前模型按需加载失败");
+            EndCameraSession();
             return false;
         }
         FaceVerifier verifier;
@@ -889,20 +943,14 @@ public class PeekShieldEngine
         var seen = new List<float[]>();
         try
         {
-            var cam = _camera;
-            if (!cam.Open(_settings.CameraIndex))
-            {
-                _cameraError = cam.LastError ?? "摄像头打开失败";
-                RestoreFaceAuth(id, wasEnrolled);
-                return false;
-            }
-            using var frame = new Mat();
             int collected = 0;
             int attempts = 0;
             for (int i = 0; i < samples + 30 && collected < samples; i++)
             {
-                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
-                var faces = _recognizer!.Detect(frame);
+                Mat? snap = GrabFrame();
+                if (snap == null || snap.Empty()) { snap?.Dispose(); await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(snap);
+                snap.Dispose();
                 if (faces.Count == 0) { await SafeDelay(200, default); continue; }
                 attempts++;
                 var emb = faces[0].Embedding;
@@ -914,7 +962,6 @@ public class PeekShieldEngine
                 }
                 await SafeDelay(300, default);
             }
-            cam.Close();
             ok = collected >= 3;
             if (ok)
             {
@@ -937,7 +984,7 @@ public class PeekShieldEngine
         finally
         {
             _settings.Save();
-            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+            ReleasePreviewRef();
         }
         return ok;
     }
@@ -969,7 +1016,6 @@ public class PeekShieldEngine
         var entry = _settings.AuthMethods.FirstOrDefault(m => m.Id == id);
         if (entry?.Kind == AuthMethodKind.QuickFace) return IsEnrolled;
         if (!ConsentService.CanProcessFace(_settings)) return DenyEnroll();
-        StopLoop();
         if (!await EnsureFaceEngineAsync())
         {
             _cameraError = "人脸识别模型加载失败，无法录入人脸";
@@ -1029,7 +1075,6 @@ public class PeekShieldEngine
         finally
         {
             _settings.Save();
-            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
         }
         return ok;
     }
@@ -1041,31 +1086,27 @@ public class PeekShieldEngine
         if (verifier == null) _faceAuthVerifiers.TryGetValue(id, out verifier);
         if (verifier == null || !verifier.IsEnrolled) return false;
         if (!ConsentService.CanProcessFace(_settings)) return false;
-        StopLoop();
+        AddPreviewRef();
         if (!await EnsureFaceEngineAsync())
         {
             status?.Invoke("人脸识别模型加载失败，请使用密码");
             LoggerService.LogInfo("人脸认证验证前模型按需加载失败");
+            EndCameraSession();
             return false;
         }
         bool ok = false;
         try
         {
-            var cam = _camera;
-            if (!cam.Open(_settings.CameraIndex))
-            {
-                status?.Invoke("摄像头打开失败，请使用密码");
-                return false;
-            }
-            using var frame = new Mat();
             double th = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
             int attempts = 0;
             var sw = Stopwatch.StartNew();
             while (sw.Elapsed < TimeSpan.FromSeconds(8) && !ok)
             {
-                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
-                if (onFrame != null) { try { onFrame(frame.Clone()); } catch { } }
-                var faces = _recognizer!.Detect(frame);
+                Mat? snap = GrabFrame();
+                if (snap == null || snap.Empty()) { snap?.Dispose(); await SafeDelay(150, default); continue; }
+                if (onFrame != null) { try { onFrame(snap.Clone()); } catch { } }
+                var faces = _recognizer!.Detect(snap);
+                snap.Dispose();
                 if (faces.Count == 0) { await SafeDelay(200, default); continue; }
                 attempts++;
                 var (isOwner, dist) = verifier.Verify(faces[0].Embedding, th);
@@ -1073,7 +1114,6 @@ public class PeekShieldEngine
                 if (isOwner) { ok = true; break; }
                 await SafeDelay(200, default);
             }
-            cam.Close();
             LoggerService.LogInfo($"人脸认证验证：条目={id} 尝试={attempts} 结果={(ok ? "通过" : "未匹配")} 阈值={th:F3} 耗时={sw.Elapsed.TotalSeconds:F1}s");
         }
         catch (Exception ex)
@@ -1083,7 +1123,7 @@ public class PeekShieldEngine
         }
         finally
         {
-            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+            ReleasePreviewRef();
         }
         return ok;
     }
@@ -1099,30 +1139,26 @@ public class PeekShieldEngine
         if (!_settings.PasswordEnabled || !_settings.QuickVerifyEnabled) return false;
         if (!ConsentService.CanProcessFace(_settings)) return false;
         if (_verifier == null || !_verifier.IsEnrolled) return false;
-        StopLoop();
+        AddPreviewRef();
         if (!await EnsureFaceEngineAsync())
         {
             status?.Invoke("人脸识别模型加载失败，请使用密码");
             LoggerService.LogInfo("快捷验证前模型按需加载失败");
+            EndCameraSession();
             return false;
         }
         bool ok = false;
         try
         {
-            var cam = _camera;
-            if (!cam.Open(_settings.CameraIndex))
-            {
-                status?.Invoke("摄像头打开失败，请使用密码");
-                return false;
-            }
-            using var frame = new Mat();
             double th = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
             int attempts = 0;
             var sw = Stopwatch.StartNew();
             while (sw.Elapsed < TimeSpan.FromSeconds(8) && !ok)
             {
-                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
-                var faces = _recognizer!.Detect(frame);
+                Mat? snap = GrabFrame();
+                if (snap == null || snap.Empty()) { snap?.Dispose(); await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(snap);
+                snap.Dispose();
                 if (faces.Count == 0) { await SafeDelay(200, default); continue; }
                 attempts++;
                 var (isOwner, dist) = _verifier.Verify(faces[0].Embedding, th);
@@ -1130,7 +1166,6 @@ public class PeekShieldEngine
                 if (isOwner) { ok = true; break; }
                 await SafeDelay(200, default);
             }
-            cam.Close();
             LoggerService.LogInfo($"快捷验证：尝试={attempts} 结果={(ok ? "通过" : "未匹配")} 阈值={th:F3} 耗时={sw.Elapsed.TotalSeconds:F1}s");
         }
         catch (Exception ex)
@@ -1140,7 +1175,7 @@ public class PeekShieldEngine
         }
         finally
         {
-            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+            ReleasePreviewRef();
         }
         return ok;
     }
@@ -1207,11 +1242,12 @@ public class PeekShieldEngine
         if (!_settings.WhitelistEnabled) return false;
         var item = _whitelist?.GetItem(id);
         if (item == null) return false;
-        StopLoop();
+        AddPreviewRef();
         if (!await EnsureFaceEngineAsync())
         {
             _cameraError = "人脸识别模型加载失败，无法录入白名单人脸";
             LoggerService.LogInfo("白名单录入前模型按需加载失败");
+            EndCameraSession();
             return false;
         }
         item.Verifier.Clear();
@@ -1219,19 +1255,14 @@ public class PeekShieldEngine
         var seen = new List<float[]>();
         try
         {
-            var cam = _camera;
-            if (!cam.Open(_settings.CameraIndex))
-            {
-                _cameraError = cam.LastError ?? "摄像头打开失败";
-                return false;
-            }
-            using var frame = new Mat();
             int collected = 0;
             int attempts = 0;
             for (int i = 0; i < samples + 30 && collected < samples; i++)
             {
-                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
-                var faces = _recognizer!.Detect(frame);
+                Mat? snap = GrabFrame();
+                if (snap == null || snap.Empty()) { snap?.Dispose(); await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(snap);
+                snap.Dispose();
                 if (faces.Count == 0) { await SafeDelay(200, default); continue; }
                 attempts++;
                 var emb = faces[0].Embedding;
@@ -1243,7 +1274,6 @@ public class PeekShieldEngine
                 }
                 await SafeDelay(300, default);
             }
-            cam.Close();
             ok = collected >= 3;
             if (ok)
             {
@@ -1267,7 +1297,7 @@ public class PeekShieldEngine
         finally
         {
             _settings.Save();
-            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+            ReleasePreviewRef();
         }
         return ok;
     }
@@ -1278,7 +1308,6 @@ public class PeekShieldEngine
         if (!_settings.WhitelistEnabled) return false;
         var item = _whitelist?.GetItem(id);
         if (item == null) return false;
-        StopLoop();
         if (!await EnsureFaceEngineAsync())
         {
             _cameraError = "人脸识别模型加载失败，无法录入白名单人脸";
@@ -1326,7 +1355,6 @@ public class PeekShieldEngine
         finally
         {
             _settings.Save();
-            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
         }
         return ok;
     }

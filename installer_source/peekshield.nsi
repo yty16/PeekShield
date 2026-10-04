@@ -9,7 +9,7 @@ SetCompressor lzma
 !include "nsDialogs.nsh"
 
 !define APPNAME "PeekShield"
-!define APPVERSION "1.2.3.0"
+!define APPVERSION "1.2.3.2"
 !define PUBLISHER "yty16"
 !define EXENAME "PeekShield.exe"
 !define APPDIR "$LOCALAPPDATA\Programs\${APPNAME}"
@@ -17,7 +17,7 @@ SetCompressor lzma
 !define PROJECTROOT "${__FILEDIR__}\.."
 
 Name "${APPNAME} ${APPVERSION}"
-OutFile "${PROJECTROOT}\installer\PeekShield-1.2.3.0-win-x64-setup.exe"
+OutFile "${PROJECTROOT}\installer\PeekShield-1.2.3.2-win-x64-setup.exe"
 InstallDir "${APPDIR}"
 RequestExecutionLevel user
 
