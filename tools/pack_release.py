@@ -3,7 +3,7 @@ import os, stat, tarfile, zipfile, struct, io, shutil
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
 INSTALLER = os.path.join(ROOT, "installer")
-ICON = os.path.join(ROOT, "installer_source", "Icon.png")
+ICON = os.path.join(ROOT, "PeekShield", "Resources", "icon.png")
 VERSION = "1.2.5.6"
 
 def walk_files(base):
