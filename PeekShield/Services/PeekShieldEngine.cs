@@ -35,6 +35,7 @@ public class PeekShieldEngine
     private HotkeyService? _hotkey;
     private HotkeyService? _escHotkey;
     private CancellationTokenSource? _cts;
+    private System.Threading.Timer? _autoBackupTimer;
     private Task? _loopTask;
     private readonly object _frameLock = new();
     private Mat? _latestFrame;
@@ -56,6 +57,14 @@ public class PeekShieldEngine
     private readonly Queue<int> _faceCountHistory = new();
     private readonly Queue<bool> _ownerHistory = new();
     private readonly Queue<bool> _strangerHistory = new();
+    private readonly Queue<int> _ownerCountHistory = new();
+    private readonly Queue<int> _whitelistCountHistory = new();
+    private readonly Queue<int> _strangerCountHistory = new();
+    private int _stableOwnerCount;
+    private int _stableWhitelistCount;
+    private int _stableStrangerCount;
+    private bool _multiFaceNoticeActive;
+    private DateTime _lastMultiFaceNotice = DateTime.MinValue;
     private const int HistorySize = 5;
 
     private readonly List<StrangerRecord> _strangers = new();
@@ -81,6 +90,17 @@ public class PeekShieldEngine
     public EngineStatus Status => _status;
     public int FaceCount => _faceCount;
     public bool OwnerPresent => _ownerPresent;
+    public int OwnerCount => _stableOwnerCount;
+    public int WhitelistCount => _stableWhitelistCount;
+    public int StrangerCount => _stableStrangerCount;
+    public string FaceDetail
+    {
+        get
+        {
+            if (_faceCount <= 0) return "无人";
+            return $"人脸 {_faceCount}（机主 {_stableOwnerCount} · 白名单 {_stableWhitelistCount} · 陌生人 {_stableStrangerCount}）";
+        }
+    }
     public bool IsPeekActive => _peekActive;
     public string CameraError => _cameraError;
     public bool IsEnrolled => _verifier?.IsEnrolled ?? false;
@@ -140,6 +160,7 @@ public class PeekShieldEngine
         ApplyHotkey();
         ApplyEscHotkey();
         ApplyManualMode();
+        SetupAutoBackup();
 
         LoggerService.CleanupOldData(_settings.AutoCleanupDays);
 
@@ -371,7 +392,7 @@ public class PeekShieldEngine
 
                 if (shouldMonitor)
                 {
-                    List<FaceInfo> faces = _faceEngine!.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter);
+                    List<FaceInfo> faces = _faceEngine!.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter, _settings.EnableGazeDetection);
                     if (_settings.WhitelistEnabled && _whitelist != null)
                     {
                         double wth = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
@@ -552,10 +573,16 @@ public class PeekShieldEngine
         bool owner = faces.Any(f => f.IsOwner);
         bool strangerLooking = faces.Any(f => !f.IsOwner && !f.IsWhitelisted && f.LookingAtScreen);
 
-        PushHistory(count, owner, strangerLooking);
+        int oc = faces.Count(f => f.IsOwner);
+        int wc = faces.Count(f => f.IsWhitelisted && !f.IsOwner);
+        int sc = faces.Count(f => !f.IsOwner && !f.IsWhitelisted);
+        PushHistory(count, owner, strangerLooking, oc, wc, sc);
         int stableCount = StableFaceCount();
         bool stableOwner = StableOwner();
         bool stableStranger = StableStranger();
+        _stableOwnerCount = StableMax(_ownerCountHistory);
+        _stableWhitelistCount = StableMax(_whitelistCountHistory);
+        _stableStrangerCount = StableMax(_strangerCountHistory);
 
         _faceCount = stableCount;
         _ownerPresent = stableOwner;
@@ -565,6 +592,24 @@ public class PeekShieldEngine
 
         if (hasAlertableStranger && !_peekActive) StartPeek(frame, strangerFaces);
         else if (!hasAlertableStranger && _peekActive) EndPeek();
+
+        if (!_peekActive && _settings.EnableMultiFaceAlert)
+        {
+            bool multi = stableCount >= 2 && (_stableWhitelistCount > 0 || _stableStrangerCount > 0);
+            if (multi)
+            {
+                if (!_multiFaceNoticeActive || (DateTime.Now - _lastMultiFaceNotice).TotalSeconds >= 8)
+                {
+                    ShowMultiFaceNotice();
+                    _multiFaceNoticeActive = true;
+                    _lastMultiFaceNotice = DateTime.Now;
+                }
+            }
+            else
+            {
+                _multiFaceNoticeActive = false;
+            }
+        }
 
         if (!hasAlertableStranger)
         {
@@ -587,24 +632,33 @@ public class PeekShieldEngine
 
     }
 
-    private void PushHistory(int count, bool owner, bool stranger)
+    private void PushHistory(int count, bool owner, bool stranger, int ownerCount, int whitelistCount, int strangerCount)
     {
         _faceCountHistory.Enqueue(count);
         _ownerHistory.Enqueue(owner);
         _strangerHistory.Enqueue(stranger);
+        _ownerCountHistory.Enqueue(ownerCount);
+        _whitelistCountHistory.Enqueue(whitelistCount);
+        _strangerCountHistory.Enqueue(strangerCount);
         while (_faceCountHistory.Count > HistorySize) _faceCountHistory.Dequeue();
         while (_ownerHistory.Count > HistorySize) _ownerHistory.Dequeue();
         while (_strangerHistory.Count > HistorySize) _strangerHistory.Dequeue();
+        while (_ownerCountHistory.Count > HistorySize) _ownerCountHistory.Dequeue();
+        while (_whitelistCountHistory.Count > HistorySize) _whitelistCountHistory.Dequeue();
+        while (_strangerCountHistory.Count > HistorySize) _strangerCountHistory.Dequeue();
     }
 
     private int StableFaceCount() => _faceCountHistory.Count == 0 ? 0 : _faceCountHistory.Max();
     private bool StableOwner() => _ownerHistory.Count(h => h) >= 3;
     private bool StableStranger() => _strangerHistory.Count(h => h) >= 3;
+    private static int StableMax(Queue<int> q) => q.Count == 0 ? 0 : q.Max();
 
     private void StartPeek(Mat frame, List<FaceInfo> strangers)
     {
         _peekActive = true;
+        _multiFaceNoticeActive = false;
         RegisterStrangerAlert(strangers);
+        CaptureStrangers(frame, strangers);
 
         if (_settings.EnableTopBanner || _settings.ActionPopup)
             _overlay.ShowPopup(PeekAlertText(), _settings);
@@ -623,9 +677,110 @@ public class PeekShieldEngine
     private void EndPeek()
     {
         _peekActive = false;
+        _multiFaceNoticeActive = false;
         _overlay.HideAll();
         if (_settings.RestoreOnSafe) WindowGuard.RestoreProcesses(_settings.ProtectedProcesses);
         PushStatus(_ownerPresent ? EngineStatus.Secure : EngineStatus.Monitoring);
+    }
+
+    private string SilentCaptureDir =>
+        string.IsNullOrWhiteSpace(_settings.SilentCaptureDir)
+            ? Path.Combine(Platform.LogsDir, "evidence")
+            : _settings.SilentCaptureDir;
+
+    // 批次2：检测到偷窥时静默裁剪陌生人面部并存盘（仅陌生人，不保存机主/白名单）
+    private void CaptureStrangers(Mat frame, List<FaceInfo> strangers)
+    {
+        if (!_settings.SilentCaptureStrangers) return;
+        if (frame == null || frame.Empty() || strangers == null || strangers.Count == 0) return;
+        try
+        {
+            var dir = SilentCaptureDir;
+            Directory.CreateDirectory(dir);
+            int idx = 0;
+            foreach (var f in strangers)
+            {
+                if (f == null) continue;
+                var r = f.Rect;
+                if (r.Width <= 0 || r.Height <= 0) continue;
+                int pad = (int)(Math.Min(r.Width, r.Height) * 0.3);
+                int x = Math.Max(0, r.X - pad);
+                int y = Math.Max(0, r.Y - pad);
+                int w = Math.Min(frame.Width - x, r.Width + pad * 2);
+                int h = Math.Min(frame.Height - y, r.Height + pad * 2);
+                if (w <= 0 || h <= 0) continue;
+                using var crop = new Mat(frame, new OpenCvSharp.Rect(x, y, w, h));
+                var suffix = idx == 0 ? "" : $"_{idx}";
+                var name = $"stranger_{DateTime.Now:yyyyMMdd_HHmmss_fff}{suffix}.png";
+                Cv2.ImWrite(Path.Combine(dir, name), crop);
+                idx++;
+            }
+            if (idx > 0) LoggerService.LogInfo($"静默取证：保存陌生人裁剪图 {idx} 张到 {dir}");
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("静默取证异常：" + ex.Message);
+        }
+    }
+
+    // 批次2：自动定时备份 .kyd 到指定目录
+    private void SetupAutoBackup()
+    {
+        try
+        {
+            _autoBackupTimer?.Dispose();
+            _autoBackupTimer = null;
+            if (!_settings.AutoBackupEnabled) return;
+            int hours = Math.Clamp(_settings.AutoBackupIntervalHours, 1, 8760);
+            long ms = (long)hours * 3600 * 1000;
+            _autoBackupTimer = new System.Threading.Timer(_ => DoAutoBackup(), null, ms, ms);
+            LoggerService.LogInfo($"自动备份已启用：间隔 {hours} 小时，目录={(string.IsNullOrWhiteSpace(_settings.AutoBackupDir) ? Platform.AppDataDir : _settings.AutoBackupDir)}");
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("自动备份定时器初始化异常：" + ex.Message);
+        }
+    }
+
+    private void DoAutoBackup()
+    {
+        try
+        {
+            if (!_settings.AutoBackupEnabled) return;
+            var dir = string.IsNullOrWhiteSpace(_settings.AutoBackupDir)
+                ? Platform.AppDataDir
+                : _settings.AutoBackupDir;
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, "auto_backup.kyd");
+            var req = new BackupExportRequest
+            {
+                IncludeSettings = true,
+                IncludeOwnerFace = true,
+                IncludeWhitelistFaces = _settings.WhitelistEnabled,
+                IncludeAuthFaces = _settings.AuthMethods.Any(m => m.Kind == AuthMethodKind.Face),
+                FilePassword = string.IsNullOrEmpty(_settings.AutoBackupPassword) ? null : _settings.AutoBackupPassword
+            };
+            var res = ConfigBackupService.Export(path, req);
+            if (res.Success)
+                LoggerService.LogInfo($"自动备份完成：{path}（加密={res.Encrypted}）");
+            else
+                LoggerService.LogInfo("自动备份失败：" + res.Error);
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("自动备份异常：" + ex.Message);
+        }
+    }
+
+    public void RunAutoBackupNow() => DoAutoBackup();
+
+    public string ResolveSilentCaptureDir() => SilentCaptureDir;
+
+    private void ShowMultiFaceNotice()
+    {
+        var text = $"⚠ 检测到多人同屏（共 {_faceCount} 人：机主 {_stableOwnerCount} · 白名单 {_stableWhitelistCount} · 陌生人 {_stableStrangerCount}）";
+        _overlay.ShowTransientPopup(text, _settings, 2600);
+        LoggerService.LogInfo("多人同屏提醒：" + text);
     }
 
     private void OnOverlayDismissed()
@@ -646,6 +801,7 @@ public class PeekShieldEngine
         ApplyEscHotkey();
         ApplyManualMode();
         SyncAutoStart();
+        SetupAutoBackup();
 
         if (_settings.EnableSmartPeek && !_settings.Paused && ConsentService.CanProcessFace(_settings))
             StartLoop();
@@ -709,10 +865,20 @@ public class PeekShieldEngine
             _tray?.ShowBalloon("窥屿盾", "智能防窥总开关未开启，快捷键无效");
             return;
         }
-        TogglePause();
-        var state = _settings.Paused ? "已暂停" : "已恢复";
-        LoggerService.LogInfo($"快捷键切换防护状态：{state}");
-        _tray?.ShowBalloon("窥屿盾", $"智能防窥{state}");
+        if (_settings.HotkeyAction == 1)
+        {
+            ToggleManual();
+            var on = _settings.ManualMode ? "已开启" : "已关闭";
+            LoggerService.LogInfo($"快捷键切换手动防窥：{on}");
+            _tray?.ShowBalloon("窥屿盾", $"手动防窥{on}");
+        }
+        else
+        {
+            TogglePause();
+            var state = _settings.Paused ? "已暂停" : "已恢复";
+            LoggerService.LogInfo($"快捷键切换防护状态：{state}");
+            _tray?.ShowBalloon("窥屿盾", $"智能防窥{state}");
+        }
     }
 
     public void TogglePause()
@@ -1364,6 +1530,13 @@ public class PeekShieldEngine
         _faceCountHistory.Clear();
         _ownerHistory.Clear();
         _strangerHistory.Clear();
+        _ownerCountHistory.Clear();
+        _whitelistCountHistory.Clear();
+        _strangerCountHistory.Clear();
+        _stableOwnerCount = 0;
+        _stableWhitelistCount = 0;
+        _stableStrangerCount = 0;
+        _multiFaceNoticeActive = false;
     }
 
     private void PushStatus(EngineStatus s)
@@ -1371,7 +1544,8 @@ public class PeekShieldEngine
         _status = s;
         Dispatcher.UIThread.Post(() =>
         {
-            _tray?.SetTooltip("窥屿盾 · " + StatusText(s) + " · 人脸 " + _faceCount);
+            _tray?.SetTooltip("窥屿盾 · " + StatusText(s) + " · " + FaceDetail);
+            _tray?.SetStatusColor(s);
             StatusChanged?.Invoke(s);
         });
     }
@@ -1393,6 +1567,8 @@ public class PeekShieldEngine
     public void Dispose()
     {
         StopLoop();
+        try { _autoBackupTimer?.Dispose(); } catch { }
+        _autoBackupTimer = null;
         _fg.Stop();
         _overlay.Dismissed -= OnOverlayDismissed;
         _overlay.HideAll();

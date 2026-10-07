@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 
@@ -14,7 +15,10 @@ internal static class Platform
         Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)
         ?? AppContext.BaseDirectory;
 
-    public static string AppDataDir
+    // 批次3：多配置文件。空字符串表示默认配置（数据目录与旧版一致）。
+    public static string ProfileName { get; set; } = "";
+
+    public static string ProfilesRoot
     {
         get
         {
@@ -22,6 +26,16 @@ internal static class Platform
             if (string.IsNullOrEmpty(baseDir))
                 baseDir = AppContext.BaseDirectory;
             return Path.Combine(baseDir, "PeekShield");
+        }
+    }
+
+    public static string AppDataDir
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(ProfileName))
+                return ProfilesRoot;
+            return Path.Combine(ProfilesRoot, "profiles", SanitizeProfileName(ProfileName));
         }
     }
 
@@ -70,5 +84,46 @@ internal static class Platform
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
         }
         catch { }
+    }
+
+    // 批次3：配置文件管理
+    public static string CurrentProfileMarkerPath => Path.Combine(ProfilesRoot, "current_profile.txt");
+
+    public static string SanitizeProfileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new System.Text.StringBuilder();
+        foreach (var c in (name ?? "").Trim())
+            sb.Append(invalid.Contains(c) ? '_' : c);
+        var s = sb.ToString().Trim('_');
+        return string.IsNullOrEmpty(s) ? "default" : s;
+    }
+
+    public static void SetCurrentProfile(string name)
+    {
+        try { File.WriteAllText(CurrentProfileMarkerPath, name ?? ""); }
+        catch { }
+    }
+
+    public static string GetCurrentProfile()
+    {
+        try { return File.Exists(CurrentProfileMarkerPath) ? (File.ReadAllText(CurrentProfileMarkerPath) ?? "").Trim() : ""; }
+        catch { return ""; }
+    }
+
+    public static List<string> ListProfiles()
+    {
+        var list = new List<string>();
+        try
+        {
+            var dir = Path.Combine(ProfilesRoot, "profiles");
+            if (Directory.Exists(dir))
+            {
+                foreach (var d in Directory.GetDirectories(dir))
+                    list.Add(Path.GetFileName(d));
+            }
+        }
+        catch { }
+        return list;
     }
 }

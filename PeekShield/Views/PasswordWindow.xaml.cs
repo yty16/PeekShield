@@ -41,6 +41,12 @@ public sealed class PasswordWindow : Window
     private AuthMethodKind _selectedKind;
     private AuthMethodEntry? _selectedMethod;
 
+    private readonly HashSet<AuthMethodKind> _passedKinds = new();
+    private readonly HashSet<string> _passedCategories = new();
+    private readonly List<string> _methodLabels = new();
+    private readonly bool _requireTwo;
+    private readonly bool _allowRecovery;
+
     private TextBox? _pwdBox;
     private Image? _facePreview;
     private TextBlock? _faceStatus;
@@ -49,7 +55,7 @@ public sealed class PasswordWindow : Window
 
     private readonly DispatcherTimer _lockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
-    public PasswordWindow(string operation, string title, string prompt, string storedHash, string? question, string? answerHash, PeekShieldEngine? engine, PeekShieldSettings settings, List<AuthMethodEntry> methods, bool quickVerify)
+    public PasswordWindow(string operation, string title, string prompt, string storedHash, string? question, string? answerHash, PeekShieldEngine? engine, PeekShieldSettings settings, List<AuthMethodEntry> methods, bool quickVerify, bool allowRecovery = true)
     {
         _operation = operation;
         _stored = storedHash;
@@ -59,6 +65,8 @@ public sealed class PasswordWindow : Window
         _settings = settings;
         _methods = methods;
         _quickVerify = quickVerify;
+        _allowRecovery = allowRecovery;
+        _requireTwo = _settings.TwoFactorEnabled && _methods.Select(m => FactorCategory(m.Kind)).Distinct().Count() >= 2;
 
         Title = title;
         Width = 640;
@@ -143,7 +151,7 @@ public sealed class PasswordWindow : Window
         bottom.Children.Add(btnRow);
 
         var firstPwdWithQuestion = _methods.FirstOrDefault(m => m.Kind == AuthMethodKind.Password && !string.IsNullOrEmpty(m.GetPasswordOptions().SecurityQuestion));
-        if (firstPwdWithQuestion != null)
+        if (_allowRecovery && firstPwdWithQuestion != null)
         {
             var forget = new TextBlock
             {
@@ -165,6 +173,8 @@ public sealed class PasswordWindow : Window
 
         BuildMethodList();
         SelectMethod(0, false);
+        if (_requireTwo && _titleText != null)
+            _titleText.Text = "已启用双因子验证：请先用一种方式验证，再换一种不同的方式完成解锁。";
 
         Loaded += (_, _) =>
         {
@@ -189,8 +199,30 @@ public sealed class PasswordWindow : Window
             if (settings.UsbUnlockEnabled) fallback.Add(new AuthMethodEntry { Id = "usb", Kind = AuthMethodKind.Usb });
             methods = fallback;
         }
+        methods = methods.Where(m => IsMethodAvailable(m, engine)).ToList();
+        if (methods.Count == 0 && settings.PasswordEnabled)
+            methods = new List<AuthMethodEntry> { new AuthMethodEntry { Id = "pwd", Kind = AuthMethodKind.Password } };
         quickVerify = methods.Count > 0 && methods[0].Kind == AuthMethodKind.QuickFace;
         return new PasswordWindow(operation, title, prompt, storedHash, question, answerHash, engine, settings, methods, quickVerify);
+    }
+
+    public static PasswordWindow CreatePasswordOnly(string title, string prompt, string storedHash, string? question, string? answerHash, PeekShieldEngine? engine, PeekShieldSettings settings)
+    {
+        var methods = new List<AuthMethodEntry> { new AuthMethodEntry { Id = "adminpwd", Kind = AuthMethodKind.Password, Name = "管理员密码" } };
+        return new PasswordWindow("Install", title, prompt, storedHash, question, answerHash, engine, settings, methods, false, false);
+    }
+
+    private static bool IsMethodAvailable(AuthMethodEntry m, PeekShieldEngine? engine)
+    {
+        return m.Kind switch
+        {
+            AuthMethodKind.Face => engine != null && engine.IsFaceAuthEnrolled(m.Id),
+            AuthMethodKind.QuickFace => engine != null && engine.QuickVerifyAvailable,
+            AuthMethodKind.System => OperatingSystem.IsWindows(),
+            AuthMethodKind.Usb => true,
+            AuthMethodKind.Password => true,
+            _ => true
+        };
     }
 
     public static async Task<Outcome> ShowVerify(Window? owner, string operation, string title, string prompt, string storedHash, string? question, string? answerHash, PeekShieldEngine? engine, PeekShieldSettings settings, bool quickVerify)
@@ -216,10 +248,12 @@ public sealed class PasswordWindow : Window
         if (_methodList == null) return;
         _methodList.Children.Clear();
         _methodButtons.Clear();
+        _methodLabels.Clear();
         for (int i = 0; i < _methods.Count; i++)
         {
             var m = _methods[i];
             var label = m.Kind == AuthMethodKind.Password && !string.IsNullOrEmpty(m.Name) ? m.Name : $"用{KindLabel(m.Kind)}继续";
+            _methodLabels.Add(label);
             var btn = new Button
             {
                 Content = label,
@@ -368,17 +402,92 @@ public sealed class PasswordWindow : Window
         _contentHost.Children.Add(panel);
     }
 
+    private static string FactorCategory(AuthMethodKind k) => k switch
+    {
+        AuthMethodKind.Password => "knowledge",
+        AuthMethodKind.Face => "biometric",
+        AuthMethodKind.QuickFace => "biometric",
+        AuthMethodKind.System => "platform",
+        AuthMethodKind.Usb => "possession",
+        _ => "other"
+    };
+
+    private bool RecordFactor(AuthMethodKind kind)
+    {
+        _passedKinds.Add(kind);
+        _passedCategories.Add(FactorCategory(kind));
+        return _requireTwo ? _passedCategories.Count >= 2 : true;
+    }
+
+    private void OnFactorSatisfied(AuthMethodKind kind)
+    {
+        _busy = false;
+        SetAllEnabled(true);
+        if (RecordFactor(kind))
+        {
+            FinalizeUnlock();
+            return;
+        }
+        SecurityService.ClearSessionUnlock();
+        var remainingKinds = string.Join("、", _methods.Where(m => !_passedKinds.Contains(m.Kind)).Select(m => KindLabel(m.Kind)).Distinct());
+        if (_titleText != null)
+            _titleText.Text = $"双因子验证进行中：已通过{KindLabel(kind)}（{_passedCategories.Count}/2），请继续使用{remainingKinds}验证。";
+        if (_hint != null)
+        {
+            _hint.Text = $"已通过{KindLabel(kind)}，还需另一种不同的验证方式才能完成解锁。剩余可选：{remainingKinds}。";
+            _hint.IsVisible = true;
+        }
+        RefreshMethodListPassed();
+        AdvanceToUnpassedKind();
+        TryFocusInput();
+    }
+
+    private void FinalizeUnlock()
+    {
+        if (_passedKinds.Contains(AuthMethodKind.Password))
+            SecurityService.SetSessionUnlocked();
+        if (_passedKinds.Contains(AuthMethodKind.Face) || _passedKinds.Contains(AuthMethodKind.QuickFace))
+            SecurityService.SetFaceUnlocked();
+        if (_passedKinds.Contains(AuthMethodKind.System))
+            SecurityService.SetSystemUnlocked();
+        if (_passedKinds.Contains(AuthMethodKind.Usb))
+            SecurityService.SetUsbUnlocked();
+        StopLockTimer();
+        Result = Outcome.Ok;
+        Close();
+    }
+
+    private void RefreshMethodListPassed()
+    {
+        for (int i = 0; i < _methodButtons.Count && i < _methodLabels.Count; i++)
+        {
+            var b = _methodButtons[i];
+            var baseLabel = _methodLabels[i];
+            b.Content = _passedKinds.Contains(_methods[i].Kind) ? baseLabel + " ✅" : baseLabel;
+        }
+    }
+
+    private void AdvanceToUnpassedKind()
+    {
+        for (int i = 0; i < _methods.Count; i++)
+        {
+            if (!_passedKinds.Contains(_methods[i].Kind))
+            {
+                SelectMethod(i, true);
+                return;
+            }
+        }
+    }
+
     private void TrySubmit()
     {
         var input = _pwdBox?.Text ?? "";
         var opts = _selectedMethod?.GetPasswordOptions();
-        var stored = opts?.PasswordHash ?? _stored;
-        if (SecurityService.TryUnlock(stored, input, out var alt))
+        var stored = !string.IsNullOrEmpty(opts?.PasswordHash) ? opts.PasswordHash : _stored;
+        if (SecurityService.TryUnlock(stored, input))
         {
             StopLockTimer();
-            if (alt) Result = Outcome.Recovery;
-            else Result = Outcome.Ok;
-            Close();
+            OnFactorSatisfied(AuthMethodKind.Password);
             return;
         }
 
@@ -426,10 +535,7 @@ public sealed class PasswordWindow : Window
             if (cts.IsCancellationRequested) return;
             if (ok)
             {
-                SecurityService.SetFaceUnlocked();
-                StopLockTimer();
-                Result = Outcome.Ok;
-                Close();
+                OnFactorSatisfied(_selectedKind);
                 return;
             }
             _faceStatus.Text = auto ? "未识别到机主，请手动点击重新扫描。" : "人脸未匹配，请重试。";
@@ -480,10 +586,7 @@ public sealed class PasswordWindow : Window
         var (ok, msg) = await SystemUnlockService.VerifyAsync("窥屿盾需要验证以解锁");
         if (ok)
         {
-            SecurityService.SetSystemUnlocked();
-            StopLockTimer();
-            Result = Outcome.Ok;
-            Close();
+            OnFactorSatisfied(AuthMethodKind.System);
             return;
         }
         if (_hint != null) { _hint.Text = msg; _hint.IsVisible = true; }
@@ -507,10 +610,7 @@ public sealed class PasswordWindow : Window
         catch { ok = false; }
         if (ok)
         {
-            SecurityService.SetUsbUnlocked();
-            StopLockTimer();
-            Result = Outcome.Ok;
-            Close();
+            OnFactorSatisfied(AuthMethodKind.Usb);
             return;
         }
         if (_hint != null) { _hint.Text = "未检测到已登记的U盘，请插入后重试。"; _hint.IsVisible = true; }
@@ -546,7 +646,7 @@ public sealed class PasswordWindow : Window
     {
         var a = ans.Text ?? "";
         var opts = method.GetPasswordOptions();
-        if (SecurityService.VerifySecret(opts.SecurityAnswerHash, a))
+        if (SecurityService.VerifySecret(opts.SecurityAnswerHash, a) || SecurityService.VerifyAlt(a))
         {
             Result = Outcome.Recovery;
             Close();

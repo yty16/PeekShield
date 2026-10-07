@@ -12,6 +12,8 @@ public class FaceInfo
     public double Score;
     public bool HasEyes;
     public double EyeAngleDeg;
+    public double YawDeg;
+    public double PitchDeg;
     public bool LookingAtScreen;
     public float[] Embedding = Array.Empty<float>();
     public bool IsWhitelisted;
@@ -42,7 +44,7 @@ public class FaceEngine : IDisposable
 
     public static double OwnerMatchThreshold(int sensitivity) => OwnerThresh[Math.Clamp(sensitivity, 0, 2)];
 
-    public List<FaceInfo> Detect(Mat frame, int sensitivity, bool lowLight, bool mirrorPosterFilter)
+    public List<FaceInfo> Detect(Mat frame, int sensitivity, bool lowLight, bool mirrorPosterFilter, bool gazeDetection = false, double yawTol = 35, double pitchTol = 30)
     {
         sensitivity = Math.Clamp(sensitivity, 0, 2);
         var list = new List<FaceInfo>();
@@ -88,6 +90,11 @@ public class FaceEngine : IDisposable
                 && fw >= MinSizeFrac[sensitivity]
                 && offset <= CenterTol[sensitivity];
 
+            // 视线/低头检测：仅在开启时生效，要求头部偏航与俯仰均在容差内，
+            // 否则不视为"注视屏幕"（避免侧身交谈、低头看手机等场景误报偷窥）。
+            if (gazeDetection && looking)
+                looking = Math.Abs(df.YawDeg) <= yawTol && Math.Abs(df.PitchDeg) <= pitchTol;
+
             if (mirrorPosterFilter && !df.HasEyes && fw > 0.55) continue;
 
             list.Add(new FaceInfo
@@ -97,6 +104,8 @@ public class FaceEngine : IDisposable
                 Score = score,
                 HasEyes = df.HasEyes,
                 EyeAngleDeg = df.EyeAngleDeg,
+                YawDeg = df.YawDeg,
+                PitchDeg = df.PitchDeg,
                 LookingAtScreen = looking,
                 Embedding = df.Embedding ?? Array.Empty<float>()
             });

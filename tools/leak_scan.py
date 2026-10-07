@@ -2,7 +2,7 @@ import os, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALLER = os.path.join(ROOT, "installer")
-VERSION = "1.2.3.2"
+VERSION = "1.2.5.6"
 
 ARTIFACTS = [
     os.path.join(INSTALLER, f"PeekShield-{VERSION}-win-x64-setup.exe"),

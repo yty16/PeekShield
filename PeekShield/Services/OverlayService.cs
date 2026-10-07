@@ -86,6 +86,20 @@ public class OverlayService
         });
     }
 
+    // 短暂提示弹窗：显示后自动关闭，不阻塞、不触发全屏保护。用于多人同屏等温和提醒。
+    public void ShowTransientPopup(string message, PeekShieldSettings? st, int ms = 2600)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            ShowPopup(message, st);
+            Task.Run(async () =>
+            {
+                try { await Task.Delay(ms); } catch { }
+                Dispatcher.UIThread.Post(ClosePopupInternal);
+            });
+        });
+    }
+
     private void ClosePopupInternal()
     {
         if (_popup == null) return;

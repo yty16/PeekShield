@@ -54,7 +54,7 @@ public sealed class SetPasswordWindow : Window
         _confirm = new TextBox { PasswordChar = '*', Watermark = "请再次输入密码", FontSize = 14, VerticalContentAlignment = VerticalAlignment.Center };
         panel.Children.Add(_confirm);
 
-        var qToggle = new CheckBox { Content = "设置保密问题（防止忘记密码时无法找回）", Margin = new Thickness(0, 6, 0, 0) };
+        var qToggle = new CheckBox { Content = "设置保密问题（忘记密码时可用保密问题重置）", Margin = new Thickness(0, 6, 0, 0) };
         _qCheck = qToggle;
         var opts = entry?.GetPasswordOptions();
         if (!string.IsNullOrEmpty(opts?.SecurityQuestion))
@@ -76,7 +76,7 @@ public sealed class SetPasswordWindow : Window
             Foreground = Palette.TextMuted,
             FontSize = 12,
             TextWrapping = TextWrapping.Wrap,
-            Text = "请牢记密码，系统仅保存密码的哈希、不会存储明文，遗忘后将无法找回（除非设置保密问题）。"
+            Text = "请牢记密码，系统仅保存密码的哈希、不会存储明文；若遗忘且未设置保密问题，将无法重置。"
         });
 
         _hint = new TextBlock { Foreground = Palette.Danger, FontSize = 12, TextWrapping = TextWrapping.Wrap, IsVisible = false };

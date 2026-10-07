@@ -91,6 +91,10 @@ public class PeekShieldSettings
 
     public bool MirrorPosterFilter { get; set; } = true;
 
+    public bool EnableGazeDetection { get; set; } = true;
+
+    public bool EnableMultiFaceAlert { get; set; } = true;
+
     public bool Paused { get; set; } = false;
     public bool ManualMode { get; set; } = false;
 
@@ -103,10 +107,25 @@ public class PeekShieldSettings
     public bool EnableHotkey { get; set; } = true;
     public string HotkeyModifiers { get; set; } = "Ctrl+Shift";
     public string HotkeyKey { get; set; } = "P";
+    public int HotkeyAction { get; set; } = 0; // 0=暂停切换防护 1=切换手动防窥
     public bool ScreenshotOnPeek { get; set; } = false;
 
     public int StrangerAlertLimit { get; set; } = 2;
     public int StrangerAlertCooldownMinutes { get; set; } = 10;
+
+    // 批次2：静默取证 + 自动定时备份
+    public bool SilentCaptureStrangers { get; set; } = true;
+    public string SilentCaptureDir { get; set; } = "";
+    public bool AutoBackupEnabled { get; set; } = false;
+    public int AutoBackupIntervalHours { get; set; } = 24;
+    public string AutoBackupDir { get; set; } = "";
+    public string AutoBackupPassword { get; set; } = "";
+
+    // 批次5：双因子解锁
+    public bool TwoFactorEnabled { get; set; } = false;
+
+    // 批次6：诊断自检
+    public string LastDiagnosticAt { get; set; } = "";
 
     public int PopupWidth { get; set; } = DefaultPopupWidth;
     public int PopupHeight { get; set; } = DefaultPopupHeight;
@@ -423,6 +442,39 @@ public class PeekShieldSettings
             if (!Enum.IsDefined(typeof(ThemeSkin), Skin)) Skin = ThemeSkin.Blue;
             changed = true;
         }
+        if (SettingsVersion < 16)
+        {
+            SettingsVersion = 16;
+            EnableGazeDetection = true;
+            EnableMultiFaceAlert = true;
+            changed = true;
+        }
+        if (SettingsVersion < 17)
+        {
+            SettingsVersion = 17;
+            SilentCaptureStrangers = true;
+            AutoBackupEnabled = false;
+            AutoBackupIntervalHours = 24;
+            changed = true;
+        }
+        if (SettingsVersion < 18)
+        {
+            SettingsVersion = 18;
+            HotkeyAction = 0;
+            changed = true;
+        }
+        if (SettingsVersion < 19)
+        {
+            SettingsVersion = 19;
+            TwoFactorEnabled = false;
+            changed = true;
+        }
+        if (SettingsVersion < 20)
+        {
+            SettingsVersion = 20;
+            LastDiagnosticAt = "";
+            changed = true;
+        }
         if (changed) Save();
     }
 
@@ -494,6 +546,55 @@ public class PeekShieldSettings
         bool changed = false;
         changed |= Dedupe(ProtectedProcesses);
         changed |= Dedupe(ProtectedWindowTitles);
+        changed |= SanitizeAuthMethods();
+        return changed;
+    }
+
+    private bool SanitizeAuthMethods()
+    {
+        if (AuthMethods == null) { AuthMethods = new List<AuthMethodEntry>(); return true; }
+        bool changed = false;
+        var cleaned = new List<AuthMethodEntry>();
+        var seenNonPwd = new HashSet<AuthMethodKind>();
+        AuthMethodEntry? firstPwd = null;
+        foreach (var m in AuthMethods)
+        {
+            if (m == null) { changed = true; continue; }
+            if (m.Kind == AuthMethodKind.Password)
+            {
+                var opts = m.GetPasswordOptions();
+                if (string.IsNullOrEmpty(opts.PasswordHash))
+                {
+                    if (firstPwd != null) { changed = true; continue; }
+                    firstPwd = m;
+                    cleaned.Add(m);
+                    continue;
+                }
+                if (firstPwd == null) firstPwd = m;
+                cleaned.Add(m);
+                continue;
+            }
+            if (seenNonPwd.Contains(m.Kind)) { changed = true; continue; }
+            seenNonPwd.Add(m.Kind);
+            cleaned.Add(m);
+        }
+        if (cleaned.Count != AuthMethods.Count)
+        {
+            AuthMethods = cleaned;
+            changed = true;
+        }
+        if (firstPwd != null)
+        {
+            var opts = firstPwd.GetPasswordOptions();
+            if (!string.IsNullOrEmpty(PasswordHash) && string.IsNullOrEmpty(opts.PasswordHash))
+            {
+                opts.PasswordHash = PasswordHash;
+                opts.SecurityQuestion = SecurityQuestion;
+                opts.SecurityAnswerHash = SecurityAnswerHash;
+                firstPwd.SetPasswordOptions(opts);
+                changed = true;
+            }
+        }
         return changed;
     }
 

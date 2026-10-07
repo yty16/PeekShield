@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using PeekShield.Models;
 
@@ -14,6 +16,8 @@ public class TrayService
     private NativeMenuItem? _pauseItem;
     private NativeMenuItem? _manualItem;
     private string _baseTooltip = "PeekShield · 就绪";
+    private readonly Dictionary<EngineStatus, WindowIcon?> _statusIcons = new();
+    private WindowIcon? _baseIcon;
 
     public static TrayService? Instance { get; private set; }
 
@@ -37,6 +41,7 @@ public class TrayService
         };
         _tray.Clicked += (_, _) => OnOpenSettings?.Invoke();
         BuildMenu();
+        GenerateStatusIcons();
 
         var app = Application.Current;
         if (app != null) TrayIcon.SetIcons(app, new TrayIcons { _tray });
@@ -148,6 +153,83 @@ public class TrayService
 
     public void SetPauseLabel(bool paused) { if (_pauseItem != null) _pauseItem.Header = paused ? "恢复防护" : "暂停防护"; }
     public void SetManualLabel(bool on) { if (_manualItem != null) _manualItem.Header = on ? "手动防窥：开" : "手动防窥：关"; }
+
+    // 批次4：托盘图标随防护状态变色
+    public void SetStatusColor(EngineStatus s)
+    {
+        if (_tray == null) return;
+        if (_statusIcons.TryGetValue(s, out var ic) && ic != null) _tray.Icon = ic;
+        else if (_statusIcons.TryGetValue(EngineStatus.Monitoring, out var def) && def != null) _tray.Icon = def;
+    }
+
+    private void GenerateStatusIcons()
+    {
+        _baseIcon = LoadIcon();
+        using var baseStream = TryOpenIconStream();
+        Bitmap? baseBmp = null;
+        if (baseStream != null)
+        {
+            try { baseBmp = new Bitmap(baseStream); } catch { baseBmp = null; }
+        }
+
+        _statusIcons.Clear();
+        foreach (EngineStatus st in Enum.GetValues<EngineStatus>())
+            _statusIcons[st] = MakeStatusIcon(ColorFor(st), baseBmp);
+
+        if (_tray != null)
+            _tray.Icon = _statusIcons.TryGetValue(EngineStatus.Monitoring, out var g) && g != null ? g : _baseIcon;
+    }
+
+    private static Color ColorFor(EngineStatus s) => s switch
+    {
+        EngineStatus.Secure => Color.FromArgb(255, 34, 197, 94),
+        EngineStatus.Monitoring => Color.FromArgb(255, 34, 197, 94),
+        EngineStatus.Manual => Color.FromArgb(255, 59, 130, 246),
+        EngineStatus.Paused => Color.FromArgb(255, 156, 163, 175),
+        EngineStatus.Peek => Color.FromArgb(255, 239, 68, 68),
+        _ => Color.FromArgb(255, 245, 158, 11)
+    };
+
+    private static WindowIcon? MakeStatusIcon(Color color, Bitmap? baseBmp)
+    {
+        try
+        {
+            const int size = 32;
+            var bmp = new RenderTargetBitmap(new PixelSize(size, size), new Vector(96, 96));
+            using (var ctx = bmp.CreateDrawingContext(false))
+            {
+                if (baseBmp != null)
+                {
+                    ctx.DrawImage(baseBmp, new Rect(0, 0, size, size));
+                    var tint = new SolidColorBrush(Color.FromArgb(140, color.R, color.G, color.B));
+                    ctx.FillRectangle(tint, new Rect(0, 0, size, size));
+                }
+                else
+                {
+                    var fill = new SolidColorBrush(color);
+                    var pen = new Pen(new SolidColorBrush(color), 2);
+                    ctx.DrawEllipse(fill, pen, new Point(size / 2.0, size / 2.0), size / 2.0 - 2, size / 2.0 - 2);
+                }
+            }
+            return new WindowIcon(bmp);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Stream? TryOpenIconStream()
+    {
+        try
+        {
+            return AssetLoader.Open(new Uri("avares://PeekShield/Resources/icon.png"));
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     public void ShowBalloon(string title, string message)
     {

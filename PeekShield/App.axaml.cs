@@ -30,6 +30,13 @@ public partial class App : Application
             return;
         }
 
+        if (Program.IsInstallVerify)
+        {
+            HandleInstallVerify();
+            base.OnFrameworkInitializationCompleted();
+            return;
+        }
+
         if (Program.IsSecondaryInstance)
         {
             if (this.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d)
@@ -291,6 +298,28 @@ public partial class App : Application
 
     public static void ForceExit() => DoExit();
 
+    public static void RestartForImport()
+    {
+        try { SingleInstanceService.Release(); } catch { }
+        try { StopGuardWatchdog(); } catch { }
+        try { GuardianService.ReleaseAppAlive(); } catch { }
+        try { PeekShieldEngine.Instance.Dispose(); } catch { }
+        SelfRelaunch(null);
+        Environment.Exit(0);
+    }
+
+    // 批次3：切换配置文件后重启（写入当前配置标记并用 --profile 参数重新拉起）
+    public static void SwitchProfileAndRestart(string name)
+    {
+        try { Platform.SetCurrentProfile(name); } catch { }
+        try { SingleInstanceService.Release(); } catch { }
+        try { StopGuardWatchdog(); } catch { }
+        try { GuardianService.ReleaseAppAlive(); } catch { }
+        try { PeekShieldEngine.Instance.Dispose(); } catch { }
+        SelfRelaunch("--profile=" + Platform.SanitizeProfileName(name));
+        Environment.Exit(0);
+    }
+
     private static void HandleCrash(Exception? ex)
     {
         try
@@ -426,6 +455,37 @@ public partial class App : Application
         {
             int code = (w.Result == PeekShield.Views.PasswordWindow.Outcome.Ok ||
                         w.Result == PeekShield.Views.PasswordWindow.Outcome.Recovery) ? 0 : 2;
+            Environment.Exit(code);
+        };
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d2)
+            d2.MainWindow = w;
+        w.Show();
+    }
+
+    private static void HandleInstallVerify()
+    {
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d)
+            d.ShutdownMode = ShutdownMode.OnLastWindowClose;
+
+        var settings = PeekShieldSettings.Load();
+        SecurityService.Settings = settings;
+
+        // 未设置管理员密码：无需验证，直接允许安装
+        if (!settings.PasswordEnabled)
+        {
+            Environment.Exit(0);
+            return;
+        }
+
+        try { ThemeService.Init(settings.ThemeMode, settings.Skin); } catch { }
+        try { ApplyTheme(); } catch { }
+
+        var w = PasswordWindow.CreatePasswordOnly("全新安装验证",
+            "本机已为窥屿盾设置了管理员密码。为保护已有数据，全新安装（清除旧设置与人脸数据）前必须输入该管理员密码，不能使用人脸识别、系统解锁、U盘或保密问题等其他方式。",
+            settings.PasswordHash, settings.SecurityQuestion, settings.SecurityAnswerHash, PeekShieldEngine.Instance, settings);
+        w.Closed += (_, _) =>
+        {
+            int code = (w.Result == PeekShield.Views.PasswordWindow.Outcome.Ok) ? 0 : 2;
             Environment.Exit(code);
         };
         if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d2)

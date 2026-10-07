@@ -16,6 +16,8 @@ public class DlibFace
     public float[] Embedding = Array.Empty<float>();
     public bool HasEyes;
     public double EyeAngleDeg;
+    public double YawDeg;
+    public double PitchDeg;
 }
 
 public class FaceRecognizer : IDisposable
@@ -115,6 +117,9 @@ public class FaceRecognizer : IDisposable
                         HasEyes = HasBothEyes(shape),
                         EyeAngleDeg = EyeAngle(shape)
                     };
+                    var (yaw, pitch) = HeadPose(shape);
+                    f.YawDeg = yaw;
+                    f.PitchDeg = pitch;
                     result.Add(f);
                 }
                 finally
@@ -193,6 +198,39 @@ public class FaceRecognizer : IDisposable
         catch
         {
             return 0;
+        }
+    }
+
+    // 基于 dlib 68 关键点的轻量头部姿态估计（无需相机内参，仅用 2D 几何比例）。
+    // 返回 (yaw 偏航角, pitch 俯仰角)，单位度。yaw>0 表示头部向右转，pitch>0 表示低头。
+    // 失败时回退 0（fail-open，不影响既有判定）。
+    private static (double yaw, double pitch) HeadPose(FullObjectDetection shape)
+    {
+        try
+        {
+            var le = MeanPoint(shape, 36, 41);
+            var re = MeanPoint(shape, 42, 47);
+            var nose = shape.GetPart(30);
+            double eyeLine = re.X - le.X;
+            if (Math.Abs(eyeLine) < 1e-3) return (0, 0);
+            double dLeft = nose.X - le.X;
+            double dRight = re.X - nose.X;
+            double asym = (dLeft - dRight) / eyeLine;
+            asym = Math.Max(-0.99, Math.Min(0.99, asym));
+            double yaw = Math.Asin(asym) * 180.0 / Math.PI;
+
+            double eyeCY = (le.Y + re.Y) * 0.5;
+            var chin = shape.GetPart(8);
+            double eyeToChin = chin.Y - eyeCY;
+            if (Math.Abs(eyeToChin) < 1e-3) return (yaw, 0);
+            double eyeToNose = nose.Y - eyeCY;
+            double ratio = eyeToNose / eyeToChin;
+            double pitch = (ratio - 0.5) * 110.0;
+            return (yaw, pitch);
+        }
+        catch
+        {
+            return (0, 0);
         }
     }
 

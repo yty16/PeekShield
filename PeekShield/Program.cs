@@ -10,6 +10,7 @@ class Program
 {
     public static bool IsSecondaryInstance;
     public static bool IsUninstallVerify;
+    public static bool IsInstallVerify;
 
     [STAThread]
     public static void Main(string[] args)
@@ -23,7 +24,19 @@ class Program
         }
 
         IsUninstallVerify = args.Contains("--uninstall-verify");
-        IsSecondaryInstance = IsUninstallVerify ? false : !SingleInstanceService.TryAcquire();
+        IsInstallVerify = args.Contains("--install-verify");
+        IsSecondaryInstance = (IsUninstallVerify || IsInstallVerify) ? false : !SingleInstanceService.TryAcquire();
+
+        // 批次3：解析 --profile 参数，决定使用哪套配置文件（目录隔离）
+        string? profileArg = null;
+        foreach (var a in args)
+        {
+            if (a.StartsWith("--profile=", StringComparison.OrdinalIgnoreCase))
+                profileArg = a.Substring("--profile=".Length).Trim();
+        }
+        Platform.ProfileName = string.IsNullOrWhiteSpace(profileArg)
+            ? Platform.GetCurrentProfile()
+            : Platform.SanitizeProfileName(profileArg);
 
         bool guardianLaunch = args.Contains("--guardian-launch");
         if (IsSecondaryInstance && guardianLaunch)

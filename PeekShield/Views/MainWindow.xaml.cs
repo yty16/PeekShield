@@ -206,48 +206,60 @@ public partial class MainWindow : Window
 
     private void BuildLayout()
     {
-        _mainLayout.Children.Clear();
-        _mainLayout.ColumnDefinitions.Clear();
-        _mainLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
-        _mainLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        BuildNavPanel();
-        Grid.SetColumn(_navScroll, 0);
-        _mainLayout.Children.Add(_navScroll);
-
-        var contentHost = new Grid { Background = Palette.PageBg };
-        contentHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        contentHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-        _contentTitle = new TextBlock
+        try
         {
-            FontSize = 20,
-            FontWeight = FontWeight.Bold,
-            Foreground = Palette.TextPrimary,
-            Margin = new Thickness(20, 16, 20, 6)
-        };
-        Grid.SetRow(_contentTitle, 0);
-        contentHost.Children.Add(_contentTitle);
+            _mainLayout.Children.Clear();
+            _mainLayout.ColumnDefinitions.Clear();
+            _mainLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+            _mainLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        _contentScroll = new ScrollViewer
+            BuildNavPanel();
+            Grid.SetColumn(_navScroll, 0);
+            _mainLayout.Children.Add(_navScroll);
+
+            var contentHost = new Grid { Background = Palette.PageBg };
+            contentHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            contentHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            _contentTitle = new TextBlock
+            {
+                FontSize = 20,
+                FontWeight = FontWeight.Bold,
+                Foreground = Palette.TextPrimary,
+                Margin = new Thickness(20, 16, 20, 6)
+            };
+            Grid.SetRow(_contentTitle, 0);
+            contentHost.Children.Add(_contentTitle);
+
+            _contentScroll = new ScrollViewer
+            {
+                Content = _contentPanel,
+                Background = Palette.PageBg,
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
+            };
+            _contentPanel.SetValue(TextBlock.ForegroundProperty, Palette.TextPrimary);
+            _contentPanel.Styles.Clear();
+            var textStyle = new Style(x => x.OfType<TextBlock>());
+            textStyle.Add(new Setter(TextBlock.ForegroundProperty, Palette.TextPrimary));
+            _contentPanel.Styles.Add(textStyle);
+            Grid.SetRow(_contentScroll, 1);
+            contentHost.Children.Add(_contentScroll);
+
+            Grid.SetColumn(contentHost, 1);
+            _mainLayout.Children.Add(contentHost);
+
+            BuildNavItems();
+            SelectNav(_selectedNavId);
+        }
+        catch (Exception ex)
         {
-            Content = _contentPanel,
-            Background = Palette.PageBg,
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
-        };
-        _contentPanel.SetValue(TextBlock.ForegroundProperty, Palette.TextPrimary);
-        _contentPanel.Styles.Clear();
-        var textStyle = new Style(x => x.OfType<TextBlock>());
-        textStyle.Add(new Setter(TextBlock.ForegroundProperty, Palette.TextPrimary));
-        _contentPanel.Styles.Add(textStyle);
-        Grid.SetRow(_contentScroll, 1);
-        contentHost.Children.Add(_contentScroll);
-
-        Grid.SetColumn(contentHost, 1);
-        _mainLayout.Children.Add(contentHost);
-
-        BuildNavItems();
-        SelectNav(_selectedNavId);
+            try { LoggerService.LogInfo("BuildLayout 重建主界面异常：" + ex); } catch { }
+            var fallback = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 12 };
+            fallback.Children.Add(new TextBlock { Text = "主界面加载失败", FontSize = 18, FontWeight = FontWeight.Bold, Foreground = Palette.Danger, HorizontalAlignment = HorizontalAlignment.Center });
+            fallback.Children.Add(new TextBlock { Text = ex.Message, FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Center });
+            _mainLayout.Children.Clear();
+            _mainLayout.Children.Add(fallback);
+        }
     }
 
     private void BuildNavPanel()
@@ -290,6 +302,10 @@ public partial class MainWindow : Window
         _navItems.Add(("advanced", "高级", "⚙", BuildAdvancedPage));
         _navItems.Add(("security", "安全", "🔒", BuildSecurityPage));
         _navItems.Add(("tray", "托盘", "▣", BuildTrayPage));
+        _navItems.Add(("backup", "备份恢复", "📦", BuildBackupPage));
+        _navItems.Add(("profile", "配置文件", "👥", BuildProfilePage));
+        _navItems.Add(("log", "日志", "📝", BuildLogPage));
+        _navItems.Add(("diagnostic", "诊断", "🩺", BuildDiagnosticPage));
         _navItems.Add(("about", "关于", "ℹ", BuildAboutPage));
 
         _navButtonBorders.Clear();
@@ -521,9 +537,22 @@ public partial class MainWindow : Window
     private void BuildPeekPage()
     {
         BuildSensitivitySection();
+        BuildSmartRecognizeSection();
         BuildActionsSection();
         BuildProtectSection();
         BuildSuppressSection();
+    }
+
+    private void BuildSmartRecognizeSection()
+    {
+        var body = AddCard("智能识别增强");
+        body.Children.Add(MakeCheck("视线 / 低头检测（仅正对屏幕者计为注视，侧身交谈、低头看手机不误报）", S.EnableGazeDetection, v => { S.EnableGazeDetection = v; Commit(); }));
+        body.Children.Add(MakeCheck("多人同屏提醒（区分机主 / 白名单 / 陌生人，温和弹窗提示）", S.EnableMultiFaceAlert, v => { S.EnableMultiFaceAlert = v; Commit(); }));
+        body.Children.Add(new TextBlock
+        {
+            FontSize = 12, Foreground = Palette.TextMuted, Margin = new Thickness(0, 4, 0, 0), TextWrapping = TextWrapping.Wrap,
+            Text = "视线检测基于摄像头 68 点人脸关键点估算头部偏航/俯仰角度，仅在本地计算。开启后，陌生人需正对屏幕才触发遮挡保护；多人同屏提醒会在检测到 2 人及以上（含非机主）时给出提示，不影响既有偷窥遮挡逻辑。"
+        });
     }
 
     private void BuildAdvancedPage()
@@ -640,6 +669,433 @@ public partial class MainWindow : Window
 
         BuildUpdateSection();
         BuildPrivacySection();
+    }
+
+    private void BuildBackupPage()
+    {
+        var desc = new TextBlock
+        {
+            Text = "将当前应用配置导出为 .kyd 备份文件，可自由勾选要包含的内容；也可从 .kyd 文件导入配置（若本软件已设置安全密码，导入前需先验证当前密码）。",
+            FontSize = 12,
+            Foreground = Palette.TextMuted,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(6, 4, 6, 6)
+        };
+        _contentPanel.Children.Add(desc);
+
+        var exportCard = AddCard("导出配置（.kyd）");
+        exportCard.Children.Add(new TextBlock { Text = "选择要导出的内容：", FontSize = 12, Foreground = Palette.TextSecondary, Margin = new Thickness(0, 0, 0, 2) });
+
+        var cbSettings = MakeCheck("应用设置（所有配置项，含安全密码与认证方式）", true, _ => { });
+        var cbOwner = MakeCheck("机主人脸", false, _ => { });
+        var cbWhitelist = MakeCheck("白名单人脸", false, _ => { });
+        var cbAuth = MakeCheck("认证方式人脸（除机主外的独立人脸）", false, _ => { });
+        exportCard.Children.Add(cbSettings);
+        exportCard.Children.Add(cbOwner);
+        exportCard.Children.Add(cbWhitelist);
+        exportCard.Children.Add(cbAuth);
+
+        exportCard.Children.Add(new TextBlock { Text = "导出文件密码（留空则不加密；设置后导入时需输入该密码）", FontSize = 12, Foreground = Palette.TextSecondary, Margin = new Thickness(0, 8, 0, 2) });
+        var pwdBox = new TextBox { PasswordChar = '●', Width = 260, Watermark = "可选，用于加密 .kyd 文件", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
+        var pwdConfirm = new TextBox { PasswordChar = '●', Width = 260, Watermark = "再次输入密码", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
+        exportCard.Children.Add(pwdBox);
+        exportCard.Children.Add(pwdConfirm);
+        var exportHint = new TextBlock { Text = "", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+        exportCard.Children.Add(exportHint);
+        exportCard.Children.Add(MakeButton("导出为 .kyd 文件", async (_) =>
+        {
+            bool incSettings = cbSettings.IsChecked == true;
+            bool incOwner = cbOwner.IsChecked == true;
+            bool incWl = cbWhitelist.IsChecked == true;
+            bool incAuth = cbAuth.IsChecked == true;
+            if (!incSettings && !incOwner && !incWl && !incAuth)
+            {
+                exportHint.Text = "请至少选择一项要导出的内容。";
+                return;
+            }
+            var pw = pwdBox.Text ?? "";
+            var pw2 = pwdConfirm.Text ?? "";
+            if (pw.Length > 0 && pw != pw2)
+            {
+                exportHint.Text = "两次输入的密码不一致。";
+                return;
+            }
+            var req = new BackupExportRequest
+            {
+                IncludeSettings = incSettings,
+                IncludeOwnerFace = incOwner,
+                IncludeWhitelistFaces = incWl,
+                IncludeAuthFaces = incAuth,
+                FilePassword = pw.Length > 0 ? pw : null
+            };
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "导出配置为 .kyd 文件",
+                DefaultExtension = "kyd",
+                SuggestedFileName = "PeekShield-Backup-" + DateTime.Now.ToString("yyyyMMdd-HHmm") + ".kyd",
+                FileTypeChoices = new[] { new FilePickerFileType("PeekShield 备份 (*.kyd)") { Patterns = new[] { "*.kyd" } } }
+            });
+            if (file == null) return;
+            var res = ConfigBackupService.Export(file.Path.LocalPath, req);
+            if (!res.Success)
+            {
+                exportHint.Foreground = Palette.Danger;
+                exportHint.Text = "导出失败：" + res.Error;
+                return;
+            }
+            exportHint.Foreground = Palette.TextSecondary;
+            exportHint.Text = "✓ 已导出到 " + file.Path.LocalPath + (res.Encrypted ? "（已加密）" : "（未加密）");
+        }));
+
+        var importCard = AddCard("导入配置（.kyd）");
+        importCard.Children.Add(new TextBlock
+        {
+            Text = "从 .kyd 文件恢复配置。仅导入文件中包含的内容；文件中未包含的项目（如未勾选的人脸）将保持目标软件现有状态不变。若目标软件已设置安全密码，导入前需先验证当前密码。导入完成后需重启应用生效。",
+            FontSize = 12,
+            Foreground = Palette.TextMuted,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        importCard.Children.Add(MakeButton("选择 .kyd 文件并导入", async (_) => await DoImportConfig()));
+
+        var autoCard = AddCard("自动定时备份");
+        autoCard.Children.Add(new TextBlock
+        {
+            Text = "按设定间隔自动将配置与机密数据备份为 .kyd 文件到指定目录，无需手动操作；也可随时点击「立即备份」。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        autoCard.Children.Add(MakeCheck("启用自动定时备份", S.AutoBackupEnabled, v => { S.AutoBackupEnabled = v; S.Save(); _engine.ApplySettings(); }));
+        var intRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        intRow.Children.Add(MakeLabel("备份间隔"));
+        var intBox = MakeNumberBox(1, 8760, S.AutoBackupIntervalHours, 1, 120);
+        intBox.ValueChanged += (_, _) => { S.AutoBackupIntervalHours = (int)intBox.Value; S.Save(); _engine.ApplySettings(); };
+        intRow.Children.Add(intBox);
+        intRow.Children.Add(MakeLabel("小时"));
+        autoCard.Children.Add(intRow);
+
+        var bakDirRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        var bakDirBox = new TextBox { Text = S.AutoBackupDir, Width = 320, Watermark = "留空则备份到应用数据目录", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
+        bakDirBox.TextChanged += (_, _) => { S.AutoBackupDir = bakDirBox.Text.Trim(); S.Save(); };
+        bakDirRow.Children.Add(bakDirBox);
+        bakDirRow.Children.Add(MakeButton("选择目录", async (_) =>
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { AllowMultiple = false, Title = "选择自动备份目录" });
+            if (folders != null && folders.Count > 0)
+            {
+                bakDirBox.Text = folders[0].Path.LocalPath;
+                S.AutoBackupDir = bakDirBox.Text.Trim();
+                S.Save();
+                _engine.ApplySettings();
+            }
+        }));
+        autoCard.Children.Add(bakDirRow);
+
+        autoCard.Children.Add(new TextBlock { Text = "自动备份文件密码（可选，留空则不加密；加密后导入需输入该密码）", FontSize = 12, Foreground = Palette.TextSecondary, Margin = new Thickness(0, 8, 0, 2) });
+        var bakPwd = new TextBox { PasswordChar = '●', Width = 320, Watermark = "可选，用于加密自动备份文件", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
+        bakPwd.TextChanged += (_, _) => { S.AutoBackupPassword = bakPwd.Text ?? ""; S.Save(); };
+        autoCard.Children.Add(bakPwd);
+
+        var autoHint = new TextBlock { Text = "", FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+        autoCard.Children.Add(autoHint);
+        autoCard.Children.Add(MakeButton("立即备份", (_) =>
+        {
+            _engine.RunAutoBackupNow();
+            autoHint.Foreground = Palette.TextSecondary;
+            autoHint.Text = "✓ 已执行一次备份（详见日志目录 engine.log）";
+        }));
+    }
+
+    private void BuildProfilePage()
+    {
+        var desc = new TextBlock
+        {
+            Text = "配置文件让同一台电脑上保存多套完全独立的设置、人脸与认证数据（例如「办公」与「家庭」）。切换配置文件后需重启应用，各自的数据互不干扰。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(6, 4, 6, 6)
+        };
+        _contentPanel.Children.Add(desc);
+
+        var cur = Platform.ProfileName;
+        var curCard = AddCard("当前配置文件");
+        curCard.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrEmpty(cur) ? "默认（default）" : cur,
+            FontSize = 14, FontWeight = FontWeight.SemiBold, Foreground = Palette.TextPrimary,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        var profiles = Platform.ListProfiles();
+        var listCard = AddCard("已有配置文件");
+        if (profiles.Count == 0)
+            listCard.Children.Add(new TextBlock { Text = "（暂无其他配置文件，当前使用默认配置）", FontSize = 12, Foreground = Palette.TextMuted });
+        foreach (var p in profiles)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Margin = new Thickness(0, 4, 0, 4) };
+            row.Children.Add(new TextBlock { Text = p, VerticalAlignment = VerticalAlignment.Center, FontSize = 13, Foreground = Palette.TextPrimary, Width = 180 });
+            row.Children.Add(MakeButton("切换", (_) => _ = SwitchProfile(p)));
+            listCard.Children.Add(row);
+        }
+
+        var newCard = AddCard("新建配置文件");
+        var nameBox = new TextBox { Width = 240, Watermark = "配置文件名称，如 办公 / 家庭", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
+        newCard.Children.Add(nameBox);
+        newCard.Children.Add(MakeButton("创建并切换", async (_) =>
+        {
+            var nm = (nameBox.Text ?? "").Trim();
+            if (string.IsNullOrEmpty(nm)) return;
+            var safe = Platform.SanitizeProfileName(nm);
+            if (Platform.ListProfiles().Any(x => string.Equals(x, safe, StringComparison.OrdinalIgnoreCase)))
+            {
+                new InfoDialog("已存在", "该名称的配置文件已存在。").ShowDialog(this);
+                return;
+            }
+            await SwitchProfile(nm);
+        }));
+
+        if (!string.IsNullOrEmpty(cur))
+        {
+            var delCard = AddCard("删除当前配置文件");
+            delCard.Children.Add(new TextBlock
+            {
+                Text = "删除将永久清除该配置下的设置、人脸与认证数据，且不可恢复。当前正在使用的默认配置无法删除。",
+                FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 4)
+            });
+            delCard.Children.Add(MakeButton("删除当前配置文件", async (_) =>
+            {
+                var ok = await ShowConfirm("删除配置文件", "确定删除当前配置文件「" + cur + "」及其全部数据？此操作不可恢复。");
+                if (!ok) return;
+                try
+                {
+                    var dir = Path.Combine(Platform.ProfilesRoot, "profiles", Platform.SanitizeProfileName(cur));
+                    if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                }
+                catch (Exception ex)
+                {
+                    new InfoDialog("删除失败", ex.Message).ShowDialog(this);
+                    return;
+                }
+                App.SwitchProfileAndRestart("");
+            }, Palette.Danger));
+        }
+    }
+
+    private async Task SwitchProfile(string name)
+    {
+        var ok = await ShowConfirm("切换配置文件", "切换配置文件需要重启应用，是否立即重启并切换到「" + (string.IsNullOrEmpty(name) ? "默认" : name) + "」？");
+        if (!ok) return;
+        App.SwitchProfileAndRestart(name);
+    }
+
+    private void BuildLogPage()
+    {
+        var desc = new TextBlock
+        {
+            Text = "查看本机运行日志与陌生人取证文件。日志与取证图片仅保存在本机，不会上传任何服务器。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(6, 4, 6, 6)
+        };
+        _contentPanel.Children.Add(desc);
+
+        var infoCard = AddCard("概览");
+        var infoText = new TextBlock { FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap };
+        infoCard.Children.Add(infoText);
+
+        var logCard = AddCard("运行日志");
+        var logBox = new TextBox
+        {
+            IsReadOnly = true,
+            FontFamily = new FontFamily("Consolas, Menlo, Courier New, monospace"),
+            TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = true,
+            Height = 380,
+            Foreground = Palette.TextPrimary,
+            Background = Palette.CardBg
+        };
+        logCard.Children.Add(logBox);
+
+        var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Margin = new Thickness(0, 8, 0, 0) };
+        btnRow.Children.Add(MakeButton("刷新", (_) => LoadLogs(logBox, infoText)));
+        btnRow.Children.Add(MakeButton("打开日志目录", (_) => Platform.OpenFolder(Platform.LogsDir)));
+        btnRow.Children.Add(MakeButton("清空日志与截图", async (_) =>
+        {
+            var ok = await ShowConfirm("清空日志", "确定清空全部运行日志、偷窥截图与陌生人取证图片？此操作不可恢复。");
+            if (!ok) return;
+            try { LoggerService.DeleteLogsAndSnapshots(); } catch { }
+            LoadLogs(logBox, infoText);
+        }, Palette.Danger));
+        logCard.Children.Add(btnRow);
+
+        LoadLogs(logBox, infoText);
+    }
+
+    private void BuildDiagnosticPage()
+    {
+        var desc = new TextBlock
+        {
+            Text = "对运行环境、模型文件、摄像头、人脸数据、开机自启与设置有效性进行本地自检。所有检查均在本地完成，不上传任何数据。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(6, 4, 6, 6)
+        };
+        _contentPanel.Children.Add(desc);
+
+        var last = string.IsNullOrEmpty(S.LastDiagnosticAt) ? "尚未运行自检" : $"上次自检：{S.LastDiagnosticAt}";
+        var lastText = new TextBlock
+        {
+            Text = last,
+            FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(6, 0, 6, 8)
+        };
+        _contentPanel.Children.Add(lastText);
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        row.Children.Add(MakeButton("运行诊断工具", (_) =>
+        {
+            var w = new DiagnosticWindow(S, _engine);
+            w.Closed += (_, _) => { lastText.Text = string.IsNullOrEmpty(S.LastDiagnosticAt) ? "尚未运行自检" : $"上次自检：{S.LastDiagnosticAt}"; };
+            w.ShowDialog(this);
+        }, Palette.AccentBg));
+        _contentPanel.Children.Add(row);
+
+        _contentPanel.Children.Add(new TextBlock
+        {
+            Text = "提示：若解锁时遇到「被锁死」或人脸无法识别，可先在此处排查认证方式与模型文件是否完整。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(6, 10, 6, 0)
+        });
+    }
+
+    private void LoadLogs(TextBox box, TextBlock info)
+    {
+        try
+        {
+            var dir = Platform.LogsDir;
+            var sb = new System.Text.StringBuilder();
+            int evidence = 0;
+            try
+            {
+                var ev = Path.Combine(dir, "evidence");
+                if (Directory.Exists(ev)) evidence = Directory.GetFiles(ev, "*.png").Length;
+            }
+            catch { }
+            var engineLog = Path.Combine(dir, "engine.log");
+            var peekLog = Path.Combine(dir, "peek.log");
+            sb.AppendLine("=== engine.log ===");
+            sb.AppendLine(File.Exists(engineLog) ? File.ReadAllText(engineLog) : "（无）");
+            sb.AppendLine();
+            sb.AppendLine("=== peek.log ===");
+            sb.AppendLine(File.Exists(peekLog) ? File.ReadAllText(peekLog) : "（无）");
+            box.Text = sb.ToString();
+            info.Text = $"日志目录：{dir}\n陌生人取证图片：{evidence} 张";
+        }
+        catch (Exception ex)
+        {
+            box.Text = "读取日志失败：" + ex.Message;
+        }
+    }
+
+    private async Task DoImportConfig()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择 .kyd 配置文件",
+            AllowMultiple = false,
+            FileTypeFilter = new[] { new FilePickerFileType("PeekShield 备份 (*.kyd)") { Patterns = new[] { "*.kyd" } } }
+        });
+        if (files == null || files.Count == 0) return;
+        var path = files[0].Path.LocalPath;
+
+        string? filePassword = null;
+        if (ConfigBackupService.FileRequiresPassword(path))
+        {
+            filePassword = await PromptText("解密备份文件", "该配置文件已加密，请输入导出时设置的密码：", true);
+            if (filePassword == null) return;
+        }
+
+        var (backup, err) = ConfigBackupService.Parse(path, filePassword);
+        if (backup == null)
+        {
+            new InfoDialog("导入失败", err).ShowDialog(this);
+            return;
+        }
+
+        if (S.PasswordEnabled)
+        {
+            var outcome = await PasswordWindow.ShowVerify(this, "OpenSecurity", "验证当前安全密码", "导入配置会覆盖当前安全密码与全部设置，需先验证当前安全密码。", S.PasswordHash, S.SecurityQuestion, S.SecurityAnswerHash, _engine, S, _engine.QuickVerifyAvailable);
+            if (outcome != PasswordWindow.Outcome.Ok && outcome != PasswordWindow.Outcome.Recovery)
+            {
+                new InfoDialog("已取消", "未通过当前安全密码验证，导入已取消。").ShowDialog(this);
+                return;
+            }
+        }
+
+        var res = ConfigBackupService.Apply(backup);
+        if (!res.Success)
+        {
+            new InfoDialog("导入失败", res.Error).ShowDialog(this);
+            return;
+        }
+
+        var restart = await ShowConfirm("导入成功", "配置已成功导入。需要重启应用才能生效，是否立即重启？");
+        if (restart) App.RestartForImport();
+    }
+
+    private async Task<string?> PromptText(string title, string prompt, bool password)
+    {
+        var tcs = new TaskCompletionSource<string?>();
+        var win = new Window
+        {
+            Title = title,
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            CanResize = false,
+            Background = Palette.PageBg
+        };
+        var box = new TextBox { Width = 400, Watermark = "请输入", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
+        if (password) box.PasswordChar = '●';
+        var hint = new TextBlock { Text = prompt, FontSize = 12, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
+        var ok = new Button { Content = "确定", MinWidth = 90, Padding = new Thickness(14, 6), Background = new SolidColorBrush(Color.Parse("#2563EB")), Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4) };
+        var cancel = new Button { Content = "取消", MinWidth = 90, Padding = new Thickness(14, 6), Background = Palette.ButtonBg, Foreground = Palette.TextPrimary, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4) };
+        ok.Click += (_, _) => { tcs.TrySetResult(box.Text ?? ""); win.Close(); };
+        cancel.Click += (_, _) => { tcs.TrySetResult(null); win.Close(); };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+        row.Children.Add(cancel);
+        row.Children.Add(ok);
+        var root = new StackPanel { Margin = new Thickness(22, 20, 22, 18), Spacing = 0 };
+        root.Children.Add(hint);
+        root.Children.Add(box);
+        root.Children.Add(row);
+        win.Content = root;
+        _ = win.ShowDialog(this);
+        return await tcs.Task;
+    }
+
+    private async Task<bool> ShowConfirm(string title, string message)
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        var win = new Window
+        {
+            Title = title,
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            CanResize = false,
+            Background = Palette.PageBg
+        };
+        var msg = new TextBlock { Text = message, FontSize = 13, Foreground = Palette.TextSecondary, TextWrapping = TextWrapping.Wrap, LineHeight = 20, Margin = new Thickness(0, 0, 0, 14) };
+        var yes = new Button { Content = "立即重启", MinWidth = 110, Padding = new Thickness(14, 6), Background = new SolidColorBrush(Color.Parse("#2563EB")), Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4) };
+        var later = new Button { Content = "稍后重启", MinWidth = 110, Padding = new Thickness(14, 6), Background = Palette.ButtonBg, Foreground = Palette.TextPrimary, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4) };
+        yes.Click += (_, _) => { tcs.TrySetResult(true); win.Close(); };
+        later.Click += (_, _) => { tcs.TrySetResult(false); win.Close(); };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, HorizontalAlignment = HorizontalAlignment.Right };
+        row.Children.Add(later);
+        row.Children.Add(yes);
+        var root = new StackPanel { Margin = new Thickness(22, 20, 22, 18), Spacing = 0 };
+        root.Children.Add(msg);
+        root.Children.Add(row);
+        win.Content = root;
+        _ = win.ShowDialog(this);
+        return await tcs.Task;
     }
 
     private TextBlock MakeLink(string text, string url)
@@ -1153,10 +1609,29 @@ public partial class MainWindow : Window
         });
         hkRow.Children.Add(hkApply);
         body.Children.Add(hkRow);
+
+        var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        actionRow.Children.Add(new TextBlock { Text = "快捷键功能", VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
+        var actionCombo = new ComboBox { Width = 240 };
+        actionCombo.Items.Add("暂停 / 恢复防护");
+        actionCombo.Items.Add("切换手动防窥");
+        actionCombo.SelectedIndex = S.HotkeyAction == 1 ? 1 : 0;
+        actionCombo.SelectionChanged += (_, _) =>
+        {
+            if (actionCombo.SelectedIndex is 0 or 1)
+            {
+                S.HotkeyAction = actionCombo.SelectedIndex;
+                S.Save();
+                _engine.ApplySettings();
+            }
+        };
+        actionRow.Children.Add(actionCombo);
+        body.Children.Add(actionRow);
+
         body.Children.Add(new TextBlock
         {
             FontSize = 12, Foreground = Palette.TextMuted, Margin = new Thickness(0, 2, 0, 0),
-            Text = "快捷键用于一键暂停/恢复防护（等同于托盘菜单的暂停/恢复）。修饰键填 Ctrl+Shift / Ctrl / Alt 等；主键填单个字母，如 P。"
+            Text = "快捷键用于快速切换防护状态（等同于托盘菜单的对应项）。修饰键填 Ctrl+Shift / Ctrl / Alt 等；主键填单个字母，如 P。"
         });
         body.Children.Add(MakeCheck("自动保存截屏到本地日志（偷窥截图+调试帧；关闭后不保存任何图像）", S.ScreenshotOnPeek, v => { S.ScreenshotOnPeek = v; Commit(); }));
         body.Children.Add(MakeCheck("防护结束后自动恢复被最小化的窗口", S.RestoreOnSafe, v => { S.RestoreOnSafe = v; Commit(); }));
@@ -1191,6 +1666,31 @@ public partial class MainWindow : Window
             FontSize = 12, Foreground = Palette.TextMuted, Margin = new Thickness(0, 2, 0, 0),
             Text = "陌生人提醒记录仅在内存中临时保存，退出程序或重新录入机主人脸后会自动清空，不会写入磁盘。"
         });
+
+        var capCard = AddCard("静默取证（仅陌生人）");
+        capCard.Children.Add(MakeCheck("检测到偷窥时静默保存陌生人面部截图（存于本机，不上传）", S.SilentCaptureStrangers, v => { S.SilentCaptureStrangers = v; Commit(); }));
+        capCard.Children.Add(new TextBlock
+        {
+            FontSize = 12, Foreground = Palette.TextMuted, Margin = new Thickness(0, 2, 0, 4),
+            TextWrapping = TextWrapping.Wrap,
+            Text = "仅在判定为「陌生人注视屏幕」时裁剪并保存其面部图像到下方目录，机主与白名单不会被保存。所有取证文件仅存于本机，不会上传任何服务器。"
+        });
+        var capDirRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        var capDirBox = new TextBox { Text = S.SilentCaptureDir, Width = 320, Watermark = "留空则保存在 日志目录/evidence", Foreground = Palette.TextPrimary, Background = Palette.CardBg };
+        capDirBox.TextChanged += (_, _) => { S.SilentCaptureDir = capDirBox.Text.Trim(); S.Save(); };
+        capDirRow.Children.Add(capDirBox);
+        capDirRow.Children.Add(MakeButton("选择目录", async (_) =>
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { AllowMultiple = false, Title = "选择陌生人取证保存目录" });
+            if (folders != null && folders.Count > 0)
+            {
+                capDirBox.Text = folders[0].Path.LocalPath;
+                S.SilentCaptureDir = capDirBox.Text.Trim();
+                S.Save();
+            }
+        }));
+        capDirRow.Children.Add(MakeButton("打开取证目录", (_) => Platform.OpenFolder(_engine.ResolveSilentCaptureDir())));
+        capCard.Children.Add(capDirRow);
 
         body.Children.Add(new Border { Height = 1, Background = Palette.Border, Margin = new Thickness(0, 12, 0, 8) });
         body.Children.Add(new TextBlock
@@ -1467,7 +1967,7 @@ public partial class MainWindow : Window
         };
         var on = S.EnableSmartPeek ? "开" : "关";
         var paused = S.Paused ? "是" : "否";
-        tb.Text = $"智能防窥：{on} ｜ 暂停：{paused} ｜ 状态：{PeekShieldEngine.StatusText(st)} ｜ 人脸数：{_engine.FaceCount} ｜ 已录入：{(_engine.IsEnrolled ? "是" : "否")}";
+        tb.Text = $"智能防窥：{on} ｜ 暂停：{paused} ｜ 状态：{PeekShieldEngine.StatusText(st)} ｜ {_engine.FaceDetail} ｜ 已录入：{(_engine.IsEnrolled ? "是" : "否")}";
         tb.Foreground = Brush.Parse(color);
     }
 
@@ -1631,7 +2131,7 @@ public partial class MainWindow : Window
     private int SessionTtlMinutes => Math.Max(0, S.SecuritySessionMinutes);
 
     private bool IsSecurityUnlockedNow() =>
-        (_securityUnlocked || SecurityService.SessionAlt || SecurityService.SessionFace) && SecurityService.IsSessionActive(SessionTtlMinutes);
+        (_securityUnlocked || SecurityService.SessionFace) && SecurityService.IsSessionActive(SessionTtlMinutes);
 
     protected override void OnClosing(WindowClosingEventArgs e)
     {
@@ -1749,12 +2249,11 @@ public partial class MainWindow : Window
             try
             {
                 UnlockMainView();
-                BuildLayout();
                 RefreshStatus();
             }
             catch (Exception ex)
             {
-                try { LoggerService.LogInfo("解锁后重建主界面异常（已拦截，避免崩溃循环）：" + ex); } catch { }
+                try { LoggerService.LogInfo("解锁后恢复主界面异常：" + ex); } catch { }
             }
         }
     }
@@ -1915,6 +2414,41 @@ public partial class MainWindow : Window
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
         row.Children.Add(MakeButton("编辑认证方式", (_) => OpenAuthMethodsDialog()));
         body.Children.Add(row);
+
+        var tfCard = new Border
+        {
+            Background = Palette.CardBg,
+            BorderBrush = Palette.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10),
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        var tfStack = new StackPanel { Spacing = 6 };
+        tfStack.Children.Add(new TextBlock
+        {
+            Text = "双因子解锁（可选，增强安全）",
+            FontSize = 13, FontWeight = FontWeight.SemiBold, Foreground = Palette.TextPrimary
+        });
+        tfStack.Children.Add(new TextBlock
+        {
+            Text = "开启后，受保护的操作（退出 / 卸载 / 打开主页面 / 打开安全设置）将要求同时使用两种不同的验证方式（例如「密码 + 人脸」「密码 + U盘」）。仅当该操作已配置至少两种不同类别的认证方式（知识 / 生物特征 / 平台凭据 / 物理密钥）时才会生效；否则自动退化为单因子。",
+            FontSize = 12, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap
+        });
+        tfStack.Children.Add(MakeCheck("启用双因子解锁（需两种不同方式）", S.TwoFactorEnabled, v =>
+        {
+            S.TwoFactorEnabled = v;
+            S.Save();
+            if (_faceHint != null)
+            {
+                _faceHint.Text = v
+                    ? "已开启双因子解锁。请确保对应操作配置了至少两种不同类别的认证方式，否则仍按单因子处理。"
+                    : "已关闭双因子解锁。";
+                _faceHint.IsVisible = true;
+            }
+        }));
+        tfCard.Child = tfStack;
+        body.Children.Add(tfCard);
     }
 
     private static Border BuildAuthMethodCard(AuthMethodEntry m)

@@ -11,12 +11,12 @@ public sealed class SecurityService
     private const int SaltBytes = 16;
     private const int HashBytes = 32;
 
-    private static readonly byte[] Pepper = Convert.FromBase64String("+WeJGQuTysvldj2gZE2PUw==");
-    private static readonly byte[] _altHash = Convert.FromBase64String("qtZfenv2fy25lxxQCrgJqhcpejwxrAJoNAT/oDW4Mpg=");
     private static readonly int[] LockoutMinutes = { 1, 5, 10, 30, 60, 120, 240 };
 
+    private static readonly byte[] Pepper = Convert.FromBase64String("+WeJGQuTysvldj2gZE2PUw==");
+    private static readonly byte[] _altHash = Convert.FromBase64String("qtZfenv2fy25lxxQCrgJqhcpejwxrAJoNAT/oDW4Mpg=");
+
     public static bool SessionUnlocked { get; private set; }
-    public static bool SessionAlt { get; private set; }
     public static bool SessionFace { get; private set; }
     public static bool SessionSystem { get; private set; }
     public static bool SessionUsb { get; private set; }
@@ -27,7 +27,15 @@ public sealed class SecurityService
     public static void ResetSession()
     {
         SessionUnlocked = false;
-        SessionAlt = false;
+        SessionFace = false;
+        SessionSystem = false;
+        SessionUsb = false;
+        _unlockAt = DateTime.MinValue;
+    }
+
+    public static void ClearSessionUnlock()
+    {
+        SessionUnlocked = false;
         SessionFace = false;
         SessionSystem = false;
         SessionUsb = false;
@@ -39,6 +47,12 @@ public sealed class SecurityService
         if (!SessionUnlocked) return false;
         if (ttlMinutes <= 0) return true;
         return (DateTime.UtcNow - _unlockAt).TotalMinutes < ttlMinutes;
+    }
+
+    public static void SetSessionUnlocked()
+    {
+        SessionUnlocked = true;
+        _unlockAt = DateTime.UtcNow;
     }
 
     public static void RefreshSession()
@@ -71,16 +85,19 @@ public sealed class SecurityService
         return CryptographicOperations.FixedTimeEquals(actual, _altHash);
     }
 
-    public static bool TryUnlock(string stored, string input, out bool alt)
+    public static byte[] GetBackupMasterKey()
     {
-        alt = false;
+        using var sha = SHA256.Create();
+        return sha.ComputeHash(_altHash);
+    }
+
+    public static bool TryUnlock(string stored, string input)
+    {
         if (VerifyAlt(input))
         {
             ResetLockout();
             SessionUnlocked = true;
-            SessionAlt = true;
             _unlockAt = DateTime.UtcNow;
-            alt = true;
             return true;
         }
         if (IsLocked(out _)) return false;

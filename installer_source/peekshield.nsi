@@ -9,7 +9,7 @@ SetCompressor lzma
 !include "nsDialogs.nsh"
 
 !define APPNAME "PeekShield"
-!define APPVERSION "1.2.3.2"
+!define APPVERSION "1.2.5.6"
 !define PUBLISHER "yty16"
 !define EXENAME "PeekShield.exe"
 !define APPDIR "$LOCALAPPDATA\Programs\${APPNAME}"
@@ -17,7 +17,7 @@ SetCompressor lzma
 !define PROJECTROOT "${__FILEDIR__}\.."
 
 Name "${APPNAME} ${APPVERSION}"
-OutFile "${PROJECTROOT}\installer\PeekShield-1.2.3.2-win-x64-setup.exe"
+OutFile "${PROJECTROOT}\installer\PeekShield-1.2.5.6-win-x64-setup.exe"
 InstallDir "${APPDIR}"
 RequestExecutionLevel user
 
@@ -72,6 +72,7 @@ Var hChkData
 ; ---------- Variables (install mode) ----------
 Var hRadUpgrade
 Var hRadFresh
+Var isFreshInstall
 
 ; ---------- OS / permission check ----------
 Function .onInit
@@ -132,6 +133,7 @@ install_mode_show:
 FunctionEnd
 
 Function InstallTypeLeave
+  StrCpy $isFreshInstall 0
   SendMessage $hRadFresh 0x00F2 0 0 $0
   ${If} $0 == 1
     MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "全新安装将清除本机已有的 ${APPNAME} 设置、人脸录入与日志，该操作不可恢复。确定继续吗？" /SD IDCANCEL
@@ -139,9 +141,18 @@ Function InstallTypeLeave
     ${If} $1 == IDCANCEL
       Abort
     ${EndIf}
-    DetailPrint "正在清除旧的 PeekShield 数据..."
-    ExecWait 'taskkill /F /IM "${EXENAME}"'
-    RMDir /r "${DATADIR}"
+    StrCpy $isFreshInstall 1
+    ; 全新安装前（解压新文件之前）验证管理员密码，保护已设置的密码
+    ; 使用本机已安装的旧程序校验（不重新解压新程序，也不改动安装目录）
+    IfFileExists "${DATADIR}\settings.json" 0 fresh_skip_verify
+    IfFileExists "$INSTDIR\${EXENAME}" 0 fresh_skip_verify
+    DetailPrint "正在请求管理员密码验证..."
+    ExecWait '"$INSTDIR\${EXENAME}" --install-verify' $3
+    ${If} $3 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "管理员密码验证失败或已取消，全新安装已终止。$\r$\n$\r$\n为保护已设置的密码，原数据与设置未做任何改动。"
+      Abort
+    ${EndIf}
+    fresh_skip_verify:
   ${EndIf}
 FunctionEnd
 
@@ -167,6 +178,12 @@ Section "主程序（必需）" SEC_MAIN
   SetOutPath "$INSTDIR"
   File /r /x "*.nsi" /x "setup.cmd" /x "*.p7s" /x "*.h" /x "*.lib" /x "*.pdb" "${PROJECTROOT}\dist\win-x64\*.*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
+
+  ; 管理员密码验证已在全新安装确认页（InstallTypeLeave，解压新文件之前）完成
+  ${If} $isFreshInstall == 1
+    DetailPrint "正在清除旧的 PeekShield 数据..."
+    RMDir /r "${DATADIR}"
+  ${EndIf}
 
   ; 注册卸载信息
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayName" "${APPNAME}"

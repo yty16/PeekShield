@@ -614,10 +614,11 @@ public sealed class AuthMethodsDialog : Window
             _ = new ConfirmDialog("无法保存", "必须保留至少一个密码认证方式。", "知道了") { ShowInTaskbar = false }.ShowDialog(this);
             return;
         }
+        var admin = _workingList.Find(m => m.Kind == AuthMethodKind.Password);
         foreach (var op in OpNames)
         {
             bool anyNonPwd = _workingList.Any(m => m.Kind != AuthMethodKind.Password && m.Operations.Contains(op));
-            bool anyPwd = _workingList.Any(m => m.Kind == AuthMethodKind.Password && m.Operations.Contains(op));
+            bool anyPwd = _workingList.Any(m => m.Kind == AuthMethodKind.Password && (m == admin || m.Operations.Contains(op)));
             if (anyNonPwd && !anyPwd)
             {
                 _ = new ConfirmDialog("无法保存", $"勾选了「{OpLabels[Array.IndexOf(OpNames, op)]}」的人脸 / 系统 / U盘认证方式，必须至少有一个密码方式也勾选同一操作。\n\n管理员密码是使用其他认证方式的前提。", "知道了") { ShowInTaskbar = false }.ShowDialog(this);
